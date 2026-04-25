@@ -1,0 +1,26 @@
+[package]
+name = "ironcalc_lotus"
+version = "0.7.1"
+authors = ["IronCalc <info@ironcalc.com>"]
+edition = "2021"
+homepage = "https://www.ironcalc.com"
+repository = "https://github.com/ironcalc/ironcalc/"
+description = "Lotus 1-2-3 (.WK3) import for IronCalc"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ironcalc_base = { path = "../base", version = "0.7" }
+thiserror = "1.0"
+bitcode = "0.6.8"
+
+[lib]
+name = "ironcalc_lotus"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wk3_2_icalc"
+path = "src/bin/wk3_2_icalc.rs"
+
+[build-dependencies]
+
+[dev-dependencies]

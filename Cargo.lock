@@ -578,6 +578,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironcalc_lotus"
+version = "0.7.1"
+dependencies = [
+ "bitcode",
+ "ironcalc_base",
+ "thiserror",
+]
+
+[[package]]
 name = "ironcalc_nodejs"
 version = "0.7.1"
 dependencies = [
