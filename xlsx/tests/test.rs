@@ -461,6 +461,15 @@ fn test_dynamic_arrays() {
 }
 
 #[test]
+// This tests the `xl/worksheets/_rels/sheet*` are parsed correctly
+// libreoffice sometimes exports .xlsx file with whitespace in the <Relationships> element
+fn test_relationship_whitespace_example() {
+    let mut model =
+        load_from_xlsx("tests/libreoffice_888_example.xlsx", "en", "UTC", "en").unwrap();
+    model.evaluate();
+}
+
+#[test]
 // This tests theme color resolution against the workbook's `xl/theme/theme1.xml`
 // rather than the hardcoded Office 2013 palette. custom_theme_colors.xlsx ships
 // a custom theme where accent6 = #C9211E; B15 uses <fgColor theme="9"/>, which
