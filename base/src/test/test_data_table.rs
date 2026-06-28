@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use crate::{cell::CellValue, types::DataTable, Model};
 
 fn number_at(model: &Model, reference: &str) -> f64 {

@@ -223,6 +223,12 @@ pub struct Model<'a> {
     /// Evaluated CF results per cell, keyed by (sheet_index, row, column).
     /// Rebuilt from scratch on every call to evaluate_conditional_formatting().
     pub(crate) cf_cache: HashMap<(u32, i32, i32), Vec<CfCellResult>>,
+    /// Transient per-cell value overrides consulted at the top of `evaluate_cell`.
+    /// Used to substitute Data Table input cells via read-time *reference
+    /// redirection* (never mutating the grid) while a What-If sweep is running.
+    /// `None` on the normal recalc path, so the check is a cheap miss with zero
+    /// overhead. Keyed by (sheet_index, row, column) to match `cells`.
+    pub(crate) data_table_overrides: Option<HashMap<(u32, i32, i32), CalcResult>>,
 }
 
 // FIXME: Maybe this should be the same as CellReference
@@ -1414,6 +1420,22 @@ impl<'a> Model<'a> {
     // Evaluates a cell and returns the value in the cell
     // FIXME: CalcResult cannot be Array or Range, should we have a different type?
     pub(crate) fn evaluate_cell(&mut self, cell_reference: CellReferenceIndex) -> CalcResult {
+        // Data Table redirection choke point. If this cell is currently being
+        // swept by a What-If data-table substitution, return the swept value
+        // directly. Placed as the first statement so EVERY read of an input
+        // cell observes the substitution: single references, cells reached
+        // inside a range, and spill anchors all funnel through `evaluate_cell`.
+        // `data_table_overrides` is `None` on the normal recalc path.
+        if let Some(overrides) = &self.data_table_overrides {
+            if let Some(value) = overrides.get(&(
+                cell_reference.sheet,
+                cell_reference.row,
+                cell_reference.column,
+            )) {
+                return value.clone();
+            }
+        }
+
         let original_cell = match self.fetch_cell(cell_reference) {
             Some(c) => c.clone(),
             None => return CalcResult::EmptyCell,
@@ -1726,6 +1748,7 @@ impl<'a> Model<'a> {
             spill_cells: Vec::new(),
             support: HashMap::new(),
             cf_cache: HashMap::new(),
+            data_table_overrides: None,
         };
 
         model.parse_formulas();
@@ -3052,6 +3075,29 @@ impl<'a> Model<'a> {
             .iter()
             .map(|&target| self.evaluate_cell(target))
             .collect()
+    }
+
+    /// Recompute `targets` with Data Table input substitutions applied via
+    /// read-time reference redirection (see `Model::data_table_overrides`).
+    /// Installs `overrides` for the duration of the recompute and always clears
+    /// it afterwards, so the redirection never leaks onto the normal recalc path.
+    ///
+    /// TODO(non-persisting eval): `recompute_cells` clears the whole memo and
+    /// persists intermediate formula results back into the grid, so the caller
+    /// must run an `evaluate_workbook_cells()` settle pass afterwards to undo the
+    /// dirtied governing/intermediate cells. The design target (big-design
+    /// KTD2/KTD4) is a non-persisting, input-cone-scoped evaluation that avoids
+    /// both the full memo clear and the settle pass — but that needs a
+    /// reverse-dependency structure the engine does not maintain yet.
+    pub(crate) fn recompute_with_overrides(
+        &mut self,
+        targets: &[CellReferenceIndex],
+        overrides: HashMap<(u32, i32, i32), CalcResult>,
+    ) -> Vec<CalcResult> {
+        self.data_table_overrides = Some(overrides);
+        let results = self.recompute_cells(targets);
+        self.data_table_overrides = None;
+        results
     }
 
     pub(crate) fn evaluate_workbook_cells(&mut self) {

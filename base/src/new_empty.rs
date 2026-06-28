@@ -667,6 +667,7 @@ impl<'a> Model<'a> {
             spill_cells: Vec::new(),
             support: HashMap::new(),
             cf_cache: HashMap::new(),
+            data_table_overrides: None,
         };
         model.parse_formulas();
         model.evaluate_conditional_formatting();

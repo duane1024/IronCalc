@@ -82,10 +82,8 @@ impl Model<'_> {
         }
 
         for table in &tables {
-            let mut saved: HashMap<CellReferenceIndex, Cell> = HashMap::new();
             let mut outputs: Vec<(CellReferenceIndex, CalcResult)> = Vec::new();
-            self.compute_one_data_table(table, &mut saved, &mut outputs);
-            self.restore_input_cells(&saved);
+            self.compute_one_data_table(table, &mut outputs);
             for (cell_reference, value) in &outputs {
                 let style = self
                     .workbook
@@ -96,8 +94,11 @@ impl Model<'_> {
                 self.write_value(*cell_reference, value, style);
             }
 
-            // Recompute normal formulas so formulas that consume this table's
-            // outputs observe the newly calculated values before the next table.
+            // The per-scenario recompute persisted override-influenced values into
+            // the governing/intermediate formula cells. Settle the workbook so they
+            // return to their real (non-substituted) values, and so formulas that
+            // consume this table's outputs observe them before the next table.
+            // (Input cells were never mutated, so there is nothing to restore.)
             self.evaluate_workbook_cells();
         }
     }
@@ -142,7 +143,6 @@ impl Model<'_> {
     fn compute_one_data_table(
         &mut self,
         table: &ResolvedDataTable,
-        saved: &mut HashMap<CellReferenceIndex, Cell>,
         outputs: &mut Vec<(CellReferenceIndex, CalcResult)>,
     ) {
         let sheet = table.sheet;
@@ -179,10 +179,18 @@ impl Model<'_> {
 
             for (row_index, &row) in rows.iter().enumerate() {
                 for (column_index, &column) in columns.iter().enumerate() {
-                    self.restore_input_cells(saved);
-                    self.substitute(saved, table.r1, &row_inputs[column_index]);
-                    self.substitute(saved, r2, &column_inputs[row_index]);
-                    let value = self.recompute_cells(&[master]).remove(0);
+                    // Redirect reads of BOTH input cells to this scenario's
+                    // row/column header values; never touch the grid.
+                    let overrides = HashMap::from([
+                        (
+                            (sheet, table.r1.row, table.r1.column),
+                            row_inputs[column_index].clone(),
+                        ),
+                        ((sheet, r2.row, r2.column), column_inputs[row_index].clone()),
+                    ]);
+                    let value = self
+                        .recompute_with_overrides(&[master], overrides)
+                        .remove(0);
                     outputs.push((CellReferenceIndex { sheet, row, column }, value));
                 }
             }
@@ -207,9 +215,11 @@ impl Model<'_> {
                 .collect();
 
             for (column_index, &column) in columns.iter().enumerate() {
-                self.restore_input_cells(saved);
-                self.substitute(saved, table.r1, &inputs[column_index]);
-                let values = self.recompute_cells(&masters);
+                let overrides = HashMap::from([(
+                    (sheet, table.r1.row, table.r1.column),
+                    inputs[column_index].clone(),
+                )]);
+                let values = self.recompute_with_overrides(&masters, overrides);
                 for (&row, value) in rows.iter().zip(values) {
                     outputs.push((CellReferenceIndex { sheet, row, column }, value));
                 }
@@ -235,9 +245,11 @@ impl Model<'_> {
                 .collect();
 
             for (row_index, &row) in rows.iter().enumerate() {
-                self.restore_input_cells(saved);
-                self.substitute(saved, table.r1, &inputs[row_index]);
-                let values = self.recompute_cells(&masters);
+                let overrides = HashMap::from([(
+                    (sheet, table.r1.row, table.r1.column),
+                    inputs[row_index].clone(),
+                )]);
+                let values = self.recompute_with_overrides(&masters, overrides);
                 for (&column, value) in columns.iter().zip(values) {
                     outputs.push((CellReferenceIndex { sheet, row, column }, value));
                 }
@@ -254,37 +266,6 @@ impl Model<'_> {
         {
             Some(cell) => self.get_cell_value(cell, cell_reference),
             None => CalcResult::EmptyCell,
-        }
-    }
-
-    fn substitute(
-        &mut self,
-        saved: &mut HashMap<CellReferenceIndex, Cell>,
-        cell_reference: CellReferenceIndex,
-        value: &CalcResult,
-    ) {
-        saved.entry(cell_reference).or_insert_with(|| {
-            self.workbook
-                .worksheet(cell_reference.sheet)
-                .ok()
-                .and_then(|ws| ws.cell(cell_reference.row, cell_reference.column).cloned())
-                .unwrap_or(Cell::EmptyCell { s: 0 })
-        });
-        let style = self
-            .workbook
-            .worksheet(cell_reference.sheet)
-            .map_or(0, |ws| {
-                ws.get_style(cell_reference.row, cell_reference.column)
-            });
-        self.write_value(cell_reference, value, style);
-    }
-
-    fn restore_input_cells(&mut self, saved: &HashMap<CellReferenceIndex, Cell>) {
-        for (cell_reference, cell) in saved {
-            if let Ok(worksheet) = self.workbook.worksheet_mut(cell_reference.sheet) {
-                let _ =
-                    worksheet.update_cell(cell_reference.row, cell_reference.column, cell.clone());
-            }
         }
     }
 

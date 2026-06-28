@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::panic)]
 
 use std::io::{Cursor, Read, Write};
 
