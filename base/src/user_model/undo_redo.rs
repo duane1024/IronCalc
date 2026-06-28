@@ -612,6 +612,40 @@ impl<'a> UserModel<'a> {
                     }
                     needs_evaluation = true;
                 }
+                Diff::SetDataTable {
+                    sheet,
+                    old_value,
+                    new_value,
+                } => {
+                    // Undo a create/replace: restore the table that was there
+                    // before, or (if none) remove the one we added, located by the
+                    // new table's anchor.
+                    needs_evaluation = true;
+                    match old_value.as_ref() {
+                        Some(old) => {
+                            self.model.set_data_table(*sheet, old.clone())?;
+                        }
+                        None => {
+                            if let Ok((left, top, _, _)) =
+                                crate::expressions::parser::parse_range(&new_value.range)
+                            {
+                                let _ = self.model.delete_data_table(*sheet, top, left);
+                            }
+                        }
+                    }
+                }
+                Diff::DeleteDataTable { sheet, old_value } => {
+                    // Undo a delete: re-add the removed table (evaluate refills it).
+                    self.model.set_data_table(*sheet, *old_value.clone())?;
+                    needs_evaluation = true;
+                }
+                Diff::SetCalcProperties {
+                    old_value,
+                    new_value: _,
+                } => {
+                    self.model.workbook.settings.calc_properties = *old_value.clone();
+                    needs_evaluation = true;
+                }
             }
         }
         if needs_evaluation {
@@ -1014,6 +1048,30 @@ impl<'a> UserModel<'a> {
                     if let Some(cf) = ws.conditional_formatting.get_mut(*index_b as usize) {
                         cf.priority = *priority_a;
                     }
+                    needs_evaluation = true;
+                }
+                Diff::SetDataTable {
+                    sheet,
+                    old_value: _,
+                    new_value,
+                } => {
+                    self.model.set_data_table(*sheet, *new_value.clone())?;
+                    needs_evaluation = true;
+                }
+                Diff::DeleteDataTable { sheet, old_value } => {
+                    // Redo a delete: remove the table again (located by its anchor).
+                    if let Ok((left, top, _, _)) =
+                        crate::expressions::parser::parse_range(&old_value.range)
+                    {
+                        let _ = self.model.delete_data_table(*sheet, top, left);
+                    }
+                    needs_evaluation = true;
+                }
+                Diff::SetCalcProperties {
+                    old_value: _,
+                    new_value,
+                } => {
+                    self.model.workbook.settings.calc_properties = *new_value.clone();
                     needs_evaluation = true;
                 }
             }

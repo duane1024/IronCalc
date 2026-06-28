@@ -8,7 +8,7 @@ use crate::{
         parser::parse_range, token::Error, types::CellReferenceIndex, utils::parse_reference_a1,
     },
     model::Model,
-    types::Cell,
+    types::{Cell, DataTable, Worksheet},
 };
 
 struct ResolvedDataTable {
@@ -71,6 +71,18 @@ fn parse_cell_reference(
         sheet,
         row: parsed.row,
         column: parsed.column,
+    })
+}
+
+/// Returns the index of the data table on `worksheet` whose output range
+/// contains `(row, column)`, if any.
+fn data_table_index_at(worksheet: &Worksheet, row: i32, column: i32) -> Option<usize> {
+    worksheet.data_tables.iter().position(|dt| {
+        parse_range(&dt.range)
+            .map(|(left, top, right, bottom)| {
+                row >= top && row <= bottom && column >= left && column <= right
+            })
+            .unwrap_or(false)
     })
 }
 
@@ -305,5 +317,87 @@ impl Model<'_> {
                 }
             }
         }
+    }
+
+    /// Adds a What-If data table to `sheet`, replacing any existing table
+    /// anchored at the same top-left cell. Returns the replaced table, if any
+    /// (for undo). The orientation/inputs come from `data_table`; the output
+    /// range and input cell references are validated.
+    pub fn set_data_table(
+        &mut self,
+        sheet: u32,
+        data_table: DataTable,
+    ) -> Result<Option<DataTable>, String> {
+        let (left, top, right, bottom) = parse_range(&data_table.range)
+            .map_err(|_| format!("Invalid data table range: '{}'", data_table.range))?;
+        if top <= 1 || left <= 1 || bottom < top || right < left {
+            return Err(format!(
+                "Invalid data table range '{}': it needs a row above and a column to its left",
+                data_table.range
+            ));
+        }
+        if parse_cell_reference(self, sheet, &data_table.r1).is_none() {
+            return Err(format!(
+                "Invalid data table input cell: '{}'",
+                data_table.r1
+            ));
+        }
+        if let Some(r2) = &data_table.r2 {
+            if parse_cell_reference(self, sheet, r2).is_none() {
+                return Err(format!("Invalid data table input cell: '{r2}'"));
+            }
+        }
+        let worksheet = self.workbook.worksheet_mut(sheet)?;
+        // Replace a table anchored at the same top-left cell, if present.
+        let replaced = worksheet
+            .data_tables
+            .iter()
+            .position(|dt| {
+                parse_range(&dt.range)
+                    .map(|(l, t, _, _)| t == top && l == left)
+                    .unwrap_or(false)
+            })
+            .map(|pos| worksheet.data_tables.remove(pos));
+        worksheet.data_tables.push(data_table);
+        Ok(replaced)
+    }
+
+    /// Removes the data table whose output range contains `(row, column)` on
+    /// `sheet`, clearing its body cells and returning the removed table (for
+    /// undo). Errors if there is no data table at that position.
+    pub fn delete_data_table(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+    ) -> Result<DataTable, String> {
+        let worksheet = self.workbook.worksheet_mut(sheet)?;
+        let pos = data_table_index_at(worksheet, row, column).ok_or_else(|| {
+            format!("No data table at row {row}, column {column} on sheet {sheet}")
+        })?;
+        let removed = worksheet.data_tables.remove(pos);
+        // Clear the (now orphaned) output cells, leaving their styles. A removed
+        // table's body would otherwise keep stale computed values.
+        if let Ok((left, top, right, bottom)) = parse_range(&removed.range) {
+            for r in top..=bottom {
+                for c in left..=right {
+                    let _ = worksheet.cell_clear_contents(r, c);
+                }
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Returns a copy of the data table whose output range contains
+    /// `(row, column)` on `sheet`, or `None`.
+    pub fn get_data_table(
+        &self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+    ) -> Result<Option<DataTable>, String> {
+        let worksheet = self.workbook.worksheet(sheet)?;
+        Ok(data_table_index_at(worksheet, row, column)
+            .map(|pos| worksheet.data_tables[pos].clone()))
     }
 }

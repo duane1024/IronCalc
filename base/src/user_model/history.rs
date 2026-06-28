@@ -4,7 +4,9 @@ use bitcode::{Decode, Encode};
 
 use crate::{
     cf_types::CfRule,
-    types::{Cell, Col, Color, Row, SheetState, Style, Theme, Worksheet},
+    types::{
+        CalcProperties, Cell, Col, Color, DataTable, Row, SheetState, Style, Theme, Worksheet,
+    },
 };
 
 #[derive(Clone, Encode, Decode)]
@@ -269,6 +271,24 @@ pub(crate) enum Diff {
         index_b: u32,
         priority_a: u32,
         priority_b: u32,
+    },
+    // Data table diffs. NOTE: new variants MUST be appended at the end — the
+    // `Diff` enum is bitcode-encoded by positional discriminant, so inserting in
+    // the middle would break previously serialized undo history.
+    SetDataTable {
+        sheet: u32,
+        /// The table previously anchored at the same top-left cell, if any.
+        old_value: Box<Option<DataTable>>,
+        new_value: Box<DataTable>,
+    },
+    DeleteDataTable {
+        sheet: u32,
+        old_value: Box<DataTable>,
+    },
+    // Calculation property diffs (iterative calculation settings).
+    SetCalcProperties {
+        old_value: Box<CalcProperties>,
+        new_value: Box<CalcProperties>,
     },
     // FIXME: we are missing SetViewDiffs
 }
