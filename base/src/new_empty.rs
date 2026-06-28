@@ -20,8 +20,8 @@ use crate::{
     locale::{get_default_locale, get_locale},
     model::{get_milliseconds_since_epoch, Model, ParsedDefinedName},
     types::{
-        DefinedName, Metadata, SheetState, Workbook, WorkbookSettings, WorkbookView, Worksheet,
-        WorksheetView,
+        CalcProperties, DefinedName, Metadata, SheetState, Workbook, WorkbookSettings,
+        WorkbookView, Worksheet, WorksheetView,
     },
     utils::ParsedReference,
 };
@@ -630,6 +630,7 @@ impl<'a> Model<'a> {
             settings: WorkbookSettings {
                 tz: timezone.to_string(),
                 locale: locale_id.to_string(),
+                calc_properties: CalcProperties::default(),
             },
             metadata: Metadata {
                 application: APPLICATION.to_string(),

@@ -102,10 +102,36 @@ pub struct Metadata {
     pub last_modified: String, //"2020-11-20T16:24:35"
 }
 
-#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+/// Workbook calculation properties, mirroring the OOXML `<calcPr>` element.
+#[derive(Encode, Decode, Debug, PartialEq, Clone)]
+pub struct CalcProperties {
+    /// When true, circular references are resolved by fixed-point iteration
+    /// instead of producing `#CIRC!`.
+    pub iterate: bool,
+    /// Maximum number of iterations (OOXML `iterateCount`, Excel default 100).
+    pub iterate_count: u32,
+    /// Convergence threshold (OOXML `iterateDelta`, Excel default 0.001):
+    /// iteration stops once the largest change of any numeric cell between two
+    /// consecutive passes is at most this value.
+    pub iterate_delta: f64,
+}
+
+impl Default for CalcProperties {
+    fn default() -> Self {
+        CalcProperties {
+            iterate: false,
+            iterate_count: 100,
+            iterate_delta: 0.001,
+        }
+    }
+}
+
+// `Eq` is intentionally not derived: `CalcProperties` holds an `f64`.
+#[derive(Encode, Decode, Debug, PartialEq, Clone)]
 pub struct WorkbookSettings {
     pub tz: String,
     pub locale: String,
+    pub calc_properties: CalcProperties,
 }
 
 /// A Workbook View tracks of the selected sheet for each view

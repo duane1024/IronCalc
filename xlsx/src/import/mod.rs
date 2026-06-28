@@ -151,6 +151,7 @@ fn load_xlsx_from_reader<R: Read + std::io::Seek>(
         settings: WorkbookSettings {
             tz: tz.to_string(),
             locale: locale.to_string(),
+            calc_properties: workbook.calc_properties,
         },
         metadata,
         tables,

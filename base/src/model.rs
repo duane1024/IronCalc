@@ -1471,6 +1471,13 @@ impl<'a> Model<'a> {
                 if let Some(state) = self.cells.get(&key) {
                     match state {
                         CellState::Evaluating => {
+                            // Circular reference. With iterative calculation
+                            // enabled, break the cycle by returning this cell's
+                            // value from the previous pass (the seed) so the
+                            // fixpoint can converge; otherwise it is an error.
+                            if self.workbook.settings.calc_properties.iterate {
+                                return self.iteration_seed(&original_cell, cell_reference);
+                            }
                             return CalcResult::new_error(
                                 Error::CIRC,
                                 cell_reference,
@@ -3055,7 +3062,7 @@ impl<'a> Model<'a> {
     /// Phase 2 evaluates every remaining cell in natural order.  Because all spill areas have
     /// already been written, regular cells always read the correct spill values.
     pub fn evaluate(&mut self) {
-        self.evaluate_workbook_cells();
+        self.evaluate_workbook_cells_iterative();
         self.compute_data_tables();
         self.evaluate_conditional_formatting();
     }
@@ -3152,6 +3159,109 @@ impl<'a> Model<'a> {
                 column: cell.column,
             });
         }
+    }
+
+    /// Like [`Model::evaluate_workbook_cells`] but, when iterative calculation
+    /// is enabled (`<calcPr iterate="1">`), runs the whole-workbook sweep
+    /// repeatedly as a fixed-point iteration so circular references converge
+    /// instead of producing `#CIRC!`. Each pass reuses the previous pass's
+    /// persisted cell values as seeds (see the `CellState::Evaluating` arm of
+    /// `evaluate_cell`). Stops once the largest numeric change between two
+    /// consecutive passes is within `iterate_delta`, or after `iterate_count`
+    /// passes — keeping the last values, matching Excel (no convergence error).
+    ///
+    /// TODO(scope): this is a whole-workbook fixpoint (big-design Doc 3); it is
+    /// not yet composed with data-table substitution, so a data table whose
+    /// governing cone is circular will use last-converged (warm-start) values
+    /// rather than re-iterating per scenario.
+    pub(crate) fn evaluate_workbook_cells_iterative(&mut self) {
+        if !self.workbook.settings.calc_properties.iterate {
+            self.evaluate_workbook_cells();
+            return;
+        }
+        let max_iterations = self.workbook.settings.calc_properties.iterate_count.max(1);
+        let delta = self.workbook.settings.calc_properties.iterate_delta;
+
+        let mut previous = self.numeric_snapshot();
+        for iteration in 0..max_iterations {
+            self.evaluate_workbook_cells();
+            let current = self.numeric_snapshot();
+            // Require at least two passes before declaring convergence, so we do
+            // not stop prematurely when the pass-0 seed happens to match.
+            if iteration >= 1 && Self::snapshots_converged(&previous, &current, delta) {
+                break;
+            }
+            previous = current;
+        }
+    }
+
+    /// Snapshot of every cell that currently holds a numeric value, keyed by
+    /// `(sheet, row, column)`. Used to measure convergence between iteration
+    /// passes.
+    fn numeric_snapshot(&self) -> HashMap<(u32, i32, i32), f64> {
+        let mut snapshot = HashMap::new();
+        for cell in self.get_all_cells() {
+            if let Ok(CellValue::Number(value)) =
+                self.get_cell_value_by_index(cell.index, cell.row, cell.column)
+            {
+                snapshot.insert((cell.index, cell.row, cell.column), value);
+            }
+        }
+        snapshot
+    }
+
+    /// True when two numeric snapshots cover exactly the same cells and no cell
+    /// moved by more than `delta`.
+    fn snapshots_converged(
+        previous: &HashMap<(u32, i32, i32), f64>,
+        current: &HashMap<(u32, i32, i32), f64>,
+        delta: f64,
+    ) -> bool {
+        if previous.len() != current.len() {
+            return false;
+        }
+        for (key, &current_value) in current {
+            match previous.get(key) {
+                Some(&previous_value) if (current_value - previous_value).abs() <= delta => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// The seed value for a circular cell during iterative calculation: its
+    /// numeric value from the previous pass, or 0 if it has not yet produced a
+    /// number (Excel seeds circular cells with 0).
+    fn iteration_seed(&self, cell: &Cell, cell_reference: CellReferenceIndex) -> CalcResult {
+        match self.get_cell_value(cell, cell_reference) {
+            CalcResult::Number(value) => CalcResult::Number(value),
+            _ => CalcResult::Number(0.0),
+        }
+    }
+
+    /// Enables or disables iterative calculation and, optionally, updates the
+    /// maximum iteration count and the convergence delta. Mirrors Excel's
+    /// "Enable iterative calculation" options. Takes effect on the next
+    /// [`Model::evaluate`].
+    pub fn set_iterative_calculation(
+        &mut self,
+        iterate: bool,
+        iterate_count: Option<u32>,
+        iterate_delta: Option<f64>,
+    ) {
+        let properties = &mut self.workbook.settings.calc_properties;
+        properties.iterate = iterate;
+        if let Some(count) = iterate_count {
+            properties.iterate_count = count;
+        }
+        if let Some(delta) = iterate_delta {
+            properties.iterate_delta = delta;
+        }
+    }
+
+    /// Returns the workbook's calculation properties (iterative-calc settings).
+    pub fn get_iterative_calculation(&self) -> &CalcProperties {
+        &self.workbook.settings.calc_properties
     }
 
     /// Removes the content of every cell in the range but leaves the style.

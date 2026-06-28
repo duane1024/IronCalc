@@ -51,6 +51,7 @@ mod test_gcd_lcm;
 mod test_general;
 mod test_inverted_ranges;
 mod test_issue_623;
+mod test_iterative_calculation;
 mod test_math;
 mod test_metadata;
 mod test_model_cell_clear_all;

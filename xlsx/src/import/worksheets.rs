@@ -13,8 +13,8 @@ use ironcalc_base::{
         utils::{column_to_number, parse_reference_a1},
     },
     types::{
-        ArrayKind, Cell, Col, Color, Comment, DataTable, DefinedName, FormulaValue, Row, SheetData,
-        SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
+        ArrayKind, CalcProperties, Cell, Col, Color, Comment, DataTable, DefinedName, FormulaValue,
+        Row, SheetData, SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
     },
 };
 use roxmltree::Node;
@@ -39,6 +39,7 @@ pub(crate) struct Sheet {
 pub(crate) struct WorkbookXML {
     pub(crate) worksheets: Vec<Sheet>,
     pub(crate) defined_names: Vec<DefinedName>,
+    pub(crate) calc_properties: CalcProperties,
 }
 
 pub(crate) struct Relationship {

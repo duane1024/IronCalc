@@ -79,6 +79,15 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
 
     let sheets = sheets_str.join("");
     let defined_names = defined_names_str.join("");
+    let calc = &workbook.settings.calc_properties;
+    let calc_pr = if calc.iterate {
+        format!(
+            "<calcPr iterate=\"1\" iterateCount=\"{}\" iterateDelta=\"{}\"/>",
+            calc.iterate_count, calc.iterate_delta
+        )
+    } else {
+        "<calcPr/>".to_string()
+    };
     format!("{XML_DECLARATION}\n\
     <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
     <bookViews>
@@ -90,6 +99,6 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
       <definedNames>\
         {defined_names}\
       </definedNames>\
-      <calcPr/>\
+      {calc_pr}\
     </workbook>")
 }

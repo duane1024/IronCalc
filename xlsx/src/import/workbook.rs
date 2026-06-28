@@ -1,6 +1,6 @@
 use std::io::Read;
 
-use ironcalc_base::types::{DefinedName, SheetState};
+use ironcalc_base::types::{CalcProperties, DefinedName, SheetState};
 use roxmltree::Node;
 
 use crate::error::XlsxError;
@@ -71,9 +71,32 @@ pub(super) fn load_workbook<R: Read + std::io::Seek>(
             sheet_id,
         })
     }
+    // Calculation properties: <calcPr iterate="1" iterateCount="100" iterateDelta="1.0E-3"/>
+    let calc_properties = doc
+        .descendants()
+        .find(|n| n.has_tag_name("calcPr"))
+        .map(|node| {
+            let iterate = matches!(node.attribute("iterate"), Some("1") | Some("true"));
+            let iterate_count = node
+                .attribute("iterateCount")
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(100);
+            let iterate_delta = node
+                .attribute("iterateDelta")
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.001);
+            CalcProperties {
+                iterate,
+                iterate_count,
+                iterate_delta,
+            }
+        })
+        .unwrap_or_default();
+
     // read the relationships file
     Ok(WorkbookXML {
         worksheets: sheets,
         defined_names,
+        calc_properties,
     })
 }
