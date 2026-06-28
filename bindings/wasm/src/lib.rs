@@ -1204,4 +1204,67 @@ impl Model {
     pub fn on_apply_named_style(&mut self, name: &str) -> Result<(), JsError> {
         self.model.on_apply_named_style(name).map_err(to_js_error)
     }
+
+    /// Returns the data table whose output range contains the cell, or null.
+    #[wasm_bindgen(js_name = "getDataTable", unchecked_return_type = "DataTable | null")]
+    pub fn get_data_table(&self, sheet: u32, row: i32, column: i32) -> Result<JsValue, JsError> {
+        let data_table = self
+            .model
+            .get_data_table(sheet, row, column)
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&data_table).map_err(|e| to_js_error(e.to_string()))
+    }
+
+    /// Creates (or replaces) a What-If data table over `range`. Provide
+    /// `rowInputCell` and/or `columnInputCell` (at least one); the orientation is
+    /// inferred from which are given.
+    #[wasm_bindgen(js_name = "setDataTable")]
+    pub fn set_data_table(
+        &mut self,
+        sheet: u32,
+        range: &str,
+        row_input_cell: Option<String>,
+        column_input_cell: Option<String>,
+    ) -> Result<(), JsError> {
+        self.model
+            .set_data_table(
+                sheet,
+                range,
+                row_input_cell.as_deref(),
+                column_input_cell.as_deref(),
+            )
+            .map_err(to_js_error)
+    }
+
+    /// Removes the data table whose output range contains the cell.
+    #[wasm_bindgen(js_name = "deleteDataTable")]
+    pub fn delete_data_table(&mut self, sheet: u32, row: i32, column: i32) -> Result<(), JsError> {
+        self.model
+            .delete_data_table(sheet, row, column)
+            .map_err(to_js_error)
+    }
+
+    /// Returns the workbook's iterative-calculation settings.
+    #[wasm_bindgen(
+        js_name = "getIterativeCalculation",
+        unchecked_return_type = "CalcProperties"
+    )]
+    pub fn get_iterative_calculation(&self) -> Result<JsValue, JsError> {
+        serde_wasm_bindgen::to_value(self.model.get_iterative_calculation())
+            .map_err(|e| to_js_error(e.to_string()))
+    }
+
+    /// Enables or disables iterative calculation, optionally setting the maximum
+    /// iteration count and convergence delta.
+    #[wasm_bindgen(js_name = "setIterativeCalculation")]
+    pub fn set_iterative_calculation(
+        &mut self,
+        iterate: bool,
+        iterate_count: Option<u32>,
+        iterate_delta: Option<f64>,
+    ) -> Result<(), JsError> {
+        self.model
+            .set_iterative_calculation(iterate, iterate_count, iterate_delta)
+            .map_err(to_js_error)
+    }
 }

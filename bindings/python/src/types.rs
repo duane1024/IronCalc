@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use xlsx::base::types::{
-    Alignment, Border, BorderItem, BorderStyle, CellType, Color, Fill, Font, FontScheme,
-    HorizontalAlignment, Style, VerticalAlignment,
+    Alignment, Border, BorderItem, BorderStyle, CalcProperties, CellType, Color, DataTable, Fill,
+    Font, FontScheme, HorizontalAlignment, Style, VerticalAlignment,
 };
 
 fn color_to_string(c: Color) -> Option<String> {
@@ -26,6 +26,57 @@ pub struct PySheetProperty {
     pub sheet_id: u32,
     #[pyo3(get)]
     pub color: Option<String>,
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyDataTable {
+    #[pyo3(get)]
+    pub range: String,
+    #[pyo3(get)]
+    pub two_dimensional: bool,
+    #[pyo3(get)]
+    pub row_oriented: bool,
+    #[pyo3(get)]
+    pub r1: String,
+    #[pyo3(get)]
+    pub r2: Option<String>,
+    #[pyo3(get)]
+    pub calculate_always: bool,
+}
+
+impl From<DataTable> for PyDataTable {
+    fn from(data_table: DataTable) -> Self {
+        PyDataTable {
+            range: data_table.range,
+            two_dimensional: data_table.two_dimensional,
+            row_oriented: data_table.row_oriented,
+            r1: data_table.r1,
+            r2: data_table.r2,
+            calculate_always: data_table.calculate_always,
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyCalcProperties {
+    #[pyo3(get)]
+    pub iterate: bool,
+    #[pyo3(get)]
+    pub iterate_count: u32,
+    #[pyo3(get)]
+    pub iterate_delta: f64,
+}
+
+impl From<CalcProperties> for PyCalcProperties {
+    fn from(properties: CalcProperties) -> Self {
+        PyCalcProperties {
+            iterate: properties.iterate,
+            iterate_count: properties.iterate_count,
+            iterate_delta: properties.iterate_delta,
+        }
+    }
 }
 
 #[pyclass]

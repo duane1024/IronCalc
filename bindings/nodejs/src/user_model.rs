@@ -696,4 +696,68 @@ impl UserModel {
       .move_rows_action(sheet, row, row_count, delta)
       .map_err(to_js_error)
   }
+
+  #[napi(js_name = "getDataTable")]
+  pub fn get_data_table(
+    &'_ self,
+    env: Env,
+    sheet: u32,
+    row: i32,
+    column: i32,
+  ) -> Result<Unknown<'_>> {
+    let data_table = self
+      .model
+      .get_data_table(sheet, row, column)
+      .map_err(to_js_error)?;
+    env
+      .to_js_value(&data_table)
+      .map_err(|e| to_js_error(e.to_string()))
+  }
+
+  #[napi(js_name = "setDataTable")]
+  pub fn set_data_table(
+    &mut self,
+    sheet: u32,
+    range: String,
+    row_input_cell: Option<String>,
+    column_input_cell: Option<String>,
+  ) -> Result<()> {
+    self
+      .model
+      .set_data_table(
+        sheet,
+        &range,
+        row_input_cell.as_deref(),
+        column_input_cell.as_deref(),
+      )
+      .map_err(to_js_error)
+  }
+
+  #[napi(js_name = "deleteDataTable")]
+  pub fn delete_data_table(&mut self, sheet: u32, row: i32, column: i32) -> Result<()> {
+    self
+      .model
+      .delete_data_table(sheet, row, column)
+      .map_err(to_js_error)
+  }
+
+  #[napi(js_name = "getIterativeCalculation")]
+  pub fn get_iterative_calculation(&'_ self, env: Env) -> Result<Unknown<'_>> {
+    env
+      .to_js_value(self.model.get_iterative_calculation())
+      .map_err(|e| to_js_error(e.to_string()))
+  }
+
+  #[napi(js_name = "setIterativeCalculation")]
+  pub fn set_iterative_calculation(
+    &mut self,
+    iterate: bool,
+    iterate_count: Option<u32>,
+    iterate_delta: Option<f64>,
+  ) -> Result<()> {
+    self
+      .model
+      .set_iterative_calculation(iterate, iterate_count, iterate_delta)
+      .map_err(to_js_error)
+  }
 }

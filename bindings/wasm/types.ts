@@ -425,6 +425,21 @@ export interface ConditionalFormattingView {
   priority: number;
 }
 
+export interface DataTable {
+  range: string;
+  two_dimensional: boolean;
+  row_oriented: boolean;
+  r1: string;
+  r2: string | null;
+  calculate_always: boolean;
+}
+
+export interface CalcProperties {
+  iterate: boolean;
+  iterate_count: number;
+  iterate_delta: number;
+}
+
 export type IconSetType =
   | "Arrows3"
   | "ArrowsGray3"

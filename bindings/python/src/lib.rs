@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyException;
 use pyo3::{create_exception, prelude::*, wrap_pyfunction};
 
-use types::{PyCellType, PySheetProperty, PyStyle};
+use types::{PyCalcProperties, PyCellType, PyDataTable, PySheetProperty, PyStyle};
 use xlsx::base::expressions::types::Area;
 use xlsx::base::types::{Color, Style, Workbook};
 use xlsx::base::{Model, UserModel};
@@ -56,6 +56,65 @@ impl PyUserModel {
     ) -> PyResult<()> {
         self.model
             .set_user_input(sheet, row, column, value)
+            .map_err(|e| WorkbookError::new_err(e.to_string()))
+    }
+
+    /// Returns the data table whose output range contains the cell, or None.
+    pub fn get_data_table(
+        &self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+    ) -> PyResult<Option<PyDataTable>> {
+        let data_table = self
+            .model
+            .get_data_table(sheet, row, column)
+            .map_err(|e| WorkbookError::new_err(e.to_string()))?;
+        Ok(data_table.map(PyDataTable::from))
+    }
+
+    /// Creates (or replaces) a What-If data table over `range`. Provide a row
+    /// input cell and/or a column input cell (at least one); the orientation is
+    /// inferred from which are given.
+    pub fn set_data_table(
+        &mut self,
+        sheet: u32,
+        range: &str,
+        row_input_cell: Option<String>,
+        column_input_cell: Option<String>,
+    ) -> PyResult<()> {
+        self.model
+            .set_data_table(
+                sheet,
+                range,
+                row_input_cell.as_deref(),
+                column_input_cell.as_deref(),
+            )
+            .map_err(|e| WorkbookError::new_err(e.to_string()))
+    }
+
+    /// Removes the data table whose output range contains the cell.
+    pub fn delete_data_table(&mut self, sheet: u32, row: i32, column: i32) -> PyResult<()> {
+        self.model
+            .delete_data_table(sheet, row, column)
+            .map_err(|e| WorkbookError::new_err(e.to_string()))
+    }
+
+    /// Returns the workbook's iterative-calculation settings.
+    pub fn get_iterative_calculation(&self) -> PyCalcProperties {
+        self.model.get_iterative_calculation().clone().into()
+    }
+
+    /// Enables or disables iterative calculation, optionally setting the maximum
+    /// iteration count and convergence delta.
+    pub fn set_iterative_calculation(
+        &mut self,
+        iterate: bool,
+        iterate_count: Option<u32>,
+        iterate_delta: Option<f64>,
+    ) -> PyResult<()> {
+        self.model
+            .set_iterative_calculation(iterate, iterate_count, iterate_delta)
             .map_err(|e| WorkbookError::new_err(e.to_string()))
     }
 

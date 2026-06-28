@@ -103,7 +103,7 @@ pub struct Metadata {
 }
 
 /// Workbook calculation properties, mirroring the OOXML `<calcPr>` element.
-#[derive(Encode, Decode, Debug, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Clone)]
 pub struct CalcProperties {
     /// When true, circular references are resolved by fixed-point iteration
     /// instead of producing `#CIRC!`.
@@ -210,7 +210,7 @@ pub struct WorksheetView {
 /// OOXML stores these as `<f t="dataTable">` on the top-left output cell. The
 /// editable formula/header cells live just outside `range`; `range` contains
 /// only calculated output cells.
-#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub struct DataTable {
     /// Output range of result cells in A1 notation, e.g. "F49:P53".
     pub range: String,
