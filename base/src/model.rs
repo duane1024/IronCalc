@@ -1253,7 +1253,11 @@ impl<'a> Model<'a> {
     }
 
     // Returns the 'single' value of a cell. Not arrays or ranges.
-    fn get_cell_value(&self, cell: &Cell, cell_reference: CellReferenceIndex) -> CalcResult {
+    pub(crate) fn get_cell_value(
+        &self,
+        cell: &Cell,
+        cell_reference: CellReferenceIndex,
+    ) -> CalcResult {
         use Cell::*;
         match cell {
             EmptyCell { .. } => CalcResult::EmptyCell,
@@ -3028,6 +3032,29 @@ impl<'a> Model<'a> {
     /// Phase 2 evaluates every remaining cell in natural order.  Because all spill areas have
     /// already been written, regular cells always read the correct spill values.
     pub fn evaluate(&mut self) {
+        self.evaluate_workbook_cells();
+        self.compute_data_tables();
+        self.evaluate_conditional_formatting();
+    }
+
+    /// Recomputes formulas and data tables. This is an explicit alias for
+    /// callers that want to make the cost of data-table evaluation clear.
+    pub fn evaluate_with_data_tables(&mut self) {
+        self.evaluate();
+    }
+
+    pub(crate) fn recompute_cells(&mut self, targets: &[CellReferenceIndex]) -> Vec<CalcResult> {
+        self.cells.clear();
+        self.support.clear();
+        self.clear_variable_stack();
+        self.clear_lambdas();
+        targets
+            .iter()
+            .map(|&target| self.evaluate_cell(target))
+            .collect()
+    }
+
+    pub(crate) fn evaluate_workbook_cells(&mut self) {
         self.collect_spill_cells();
 
         let n = self.spill_cells.len();
@@ -3079,7 +3106,6 @@ impl<'a> Model<'a> {
                 column: cell.column,
             });
         }
-        self.evaluate_conditional_formatting();
     }
 
     /// Removes the content of every cell in the range but leaves the style.

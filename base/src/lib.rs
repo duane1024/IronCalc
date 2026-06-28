@@ -51,6 +51,7 @@ mod cast;
 mod conditional_formatting;
 mod constants;
 mod cut_paste;
+mod data_table;
 mod functions;
 mod implicit_intersection;
 mod model;

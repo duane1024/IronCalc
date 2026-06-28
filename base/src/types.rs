@@ -179,6 +179,27 @@ pub struct WorksheetView {
     pub left_column: i32,
 }
 
+/// An Excel "Data Table" (What-If Analysis).
+///
+/// OOXML stores these as `<f t="dataTable">` on the top-left output cell. The
+/// editable formula/header cells live just outside `range`; `range` contains
+/// only calculated output cells.
+#[derive(Encode, Decode, Debug, PartialEq, Eq, Clone)]
+pub struct DataTable {
+    /// Output range of result cells in A1 notation, e.g. "F49:P53".
+    pub range: String,
+    /// True for a two-variable table (`dt2D="1"`).
+    pub two_dimensional: bool,
+    /// True when a one-variable table uses a row input cell (`dtr="1"`).
+    pub row_oriented: bool,
+    /// First input cell: row input cell for 2D, sole input cell for 1D.
+    pub r1: String,
+    /// Column input cell for 2D tables.
+    pub r2: Option<String>,
+    /// Excel's calculate-always hint (`ca="1"`).
+    pub calculate_always: bool,
+}
+
 /// Internal representation of a worksheet Excel object
 #[derive(Encode, Decode, Debug, PartialEq, Clone)]
 pub struct Worksheet {
@@ -199,6 +220,7 @@ pub struct Worksheet {
     /// Whether or not to show the grid lines in the worksheet
     pub show_grid_lines: bool,
     pub conditional_formatting: Vec<ConditionalFormatting>,
+    pub data_tables: Vec<DataTable>,
 }
 
 /// Internal representation of Excel's sheet_data

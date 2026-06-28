@@ -8,6 +8,7 @@ mod test_cell_clear_contents;
 mod test_circular_references;
 mod test_column_width;
 mod test_criteria;
+mod test_data_table;
 mod test_database;
 mod test_date_and_time;
 mod test_datedif_leap_month_end;

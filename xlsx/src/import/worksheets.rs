@@ -13,7 +13,7 @@ use ironcalc_base::{
         utils::{column_to_number, parse_reference_a1},
     },
     types::{
-        ArrayKind, Cell, Col, Color, Comment, DefinedName, FormulaValue, Row, SheetData,
+        ArrayKind, Cell, Col, Color, Comment, DataTable, DefinedName, FormulaValue, Row, SheetData,
         SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
     },
 };
@@ -793,7 +793,13 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     // Cells part of an array formula
     let mut array_cell = HashMap::new();
 
-    for row in sheet_data_nodes.children() {
+    // Excel Data Tables (What-If Analysis) anchored on this sheet.
+    let mut data_tables = Vec::new();
+
+    for row in sheet_data_nodes
+        .children()
+        .filter(|node| node.has_tag_name("row"))
+    {
         // This is the row number 1-indexed
         let mut row_index = match get_attribute(&row, "r") {
             Ok(s) => Some(s.parse::<i32>()?),
@@ -855,7 +861,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         // cm: cell metadata (used for dynamic arrays)
         // vm: value metadata (used for #SPILL! and #CALC! errors)
         // ph: Show Phonetic, unused
-        for cell in row.children() {
+        for cell in row.children().filter(|node| node.has_tag_name("c")) {
             let cell_ref = get_attribute(&cell, "r")?;
             let (r_index, column_index) = parse_cell_reference(cell_ref).map_err(XlsxError::Xml)?;
             // Update the row_index if it was not set before
@@ -967,7 +973,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
                 let formula_node = fs[0];
                 let mut formula_type = formula_node.attribute("t").unwrap_or("normal");
                 let formula_ref = formula_node.attribute("ref");
-                if formula_node.attribute("ca") == Some("1")
+                if formula_node.attribute("t").is_none()
+                    && formula_node.attribute("ca") == Some("1")
                     && formula_node.text().is_none()
                     && !formula_node.children().any(|n| n.is_element())
                 {
@@ -1038,7 +1045,20 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
                         }
                     }
                     "dataTable" => {
-                        return Err(XlsxError::NotImplemented("data table formulas".to_string()));
+                        let range = get_attribute(&formula_node, "ref")?.to_string();
+                        let two_dimensional = formula_node.attribute("dt2D") == Some("1");
+                        let row_oriented = formula_node.attribute("dtr") == Some("1");
+                        let r1 = get_attribute(&formula_node, "r1")?.to_string();
+                        let r2 = formula_node.attribute("r2").map(|s| s.to_string());
+                        let calculate_always = formula_node.attribute("ca") == Some("1");
+                        data_tables.push(DataTable {
+                            range,
+                            two_dimensional,
+                            row_oriented,
+                            r1,
+                            r2,
+                            calculate_always,
+                        });
                     }
                     "array" => {
                         let range = match formula_ref {
@@ -1183,6 +1203,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             show_grid_lines: sheet_view.show_grid_lines,
             views,
             conditional_formatting,
+            data_tables,
         },
         sheet_view.is_selected,
     ))

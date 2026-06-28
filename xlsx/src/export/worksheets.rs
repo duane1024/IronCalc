@@ -24,9 +24,9 @@ use ironcalc_base::{
     expressions::{
         parser::{static_analysis::StaticResult, stringify::to_excel_string, Node},
         types::CellReferenceRC,
-        utils::number_to_column,
+        utils::{number_to_column, parse_reference_a1},
     },
-    types::{ArrayKind, Cell, FormulaValue, SpillValue, Worksheet},
+    types::{ArrayKind, Cell, DataTable, FormulaValue, SpillValue, Worksheet},
 };
 
 use crate::export::conditional_formatting::get_conditional_formatting_xml;
@@ -38,6 +38,32 @@ fn get_range_str(row: i32, column: i32, width: i32, height: i32) -> Option<Strin
     let column2 = number_to_column(column + width - 1)?;
     let row2 = row + height - 1;
     Some(format!("{}{}:{}{}", column1, row, column2, row2))
+}
+
+fn get_data_table_anchor(table: &DataTable) -> Option<(i32, i32)> {
+    let first_reference = table.range.split(':').next()?;
+    let reference = parse_reference_a1(&first_reference.to_ascii_uppercase())?;
+    Some((reference.row, reference.column))
+}
+
+fn get_data_table_formula(table: &DataTable) -> String {
+    let range = escape_xml(&table.range);
+    let r1 = escape_xml(&table.r1);
+    let r2 = table
+        .r2
+        .as_ref()
+        .map(|reference| format!(" r2=\"{}\"", escape_xml(reference)))
+        .unwrap_or_default();
+    let calculate_always = if table.calculate_always {
+        r#" ca="1""#
+    } else {
+        ""
+    };
+    let dt2d = i32::from(table.two_dimensional);
+    let dtr = i32::from(table.row_oriented);
+    format!(
+        r#"<f t="dataTable" ref="{range}" dt2D="{dt2d}" dtr="{dtr}" r1="{r1}"{r2}{calculate_always}/>"#
+    )
 }
 
 fn get_cell_style_attribute(s: i32) -> String {
@@ -72,6 +98,11 @@ pub(crate) fn get_worksheet_xml(
     let mut sheet_data_str: Vec<String> = vec![];
     let mut cols_str: Vec<String> = vec![];
     let mut merged_cells_str: Vec<String> = vec![];
+    let data_table_anchors: HashMap<(i32, i32), &DataTable> = worksheet
+        .data_tables
+        .iter()
+        .filter_map(|table| get_data_table_anchor(table).map(|anchor| (anchor, table)))
+        .collect();
 
     for col in &worksheet.cols {
         // <col min="4" max="4" width="12" customWidth="1"/>
@@ -108,11 +139,21 @@ pub(crate) fn get_worksheet_xml(
         for (column_index, cell) in row_data.iter().sorted_by_key(|x| x.0) {
             let column_name = number_to_column(*column_index).unwrap();
             let cell_name = format!("{column_name}{row_index}");
+            let data_table_formula = data_table_anchors
+                .get(&(*row_index, *column_index))
+                .map(|table| get_data_table_formula(table))
+                .unwrap_or_default();
             match cell {
                 Cell::EmptyCell { s } => {
                     // they only hold the style
                     let style = get_cell_style_attribute(*s);
-                    row_data_str.push(format!("<c r=\"{cell_name}\"{style}/>"));
+                    if data_table_formula.is_empty() {
+                        row_data_str.push(format!("<c r=\"{cell_name}\"{style}/>"));
+                    } else {
+                        row_data_str.push(format!(
+                            "<c r=\"{cell_name}\"{style}>{data_table_formula}</c>"
+                        ));
+                    }
                 }
                 Cell::BooleanCell { v, s }
                 | Cell::SpillCell {
@@ -126,7 +167,7 @@ pub(crate) fn get_worksheet_xml(
                     let b = i32::from(*v);
                     let style = get_cell_style_attribute(*s);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"b\"{style}><v>{b}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"b\"{style}>{data_table_formula}<v>{b}</v></c>"
                     ));
                 }
                 Cell::NumberCell { v, s }
@@ -140,7 +181,9 @@ pub(crate) fn get_worksheet_xml(
                     //     <v>3</v>
                     // </c>
                     let style = get_cell_style_attribute(*s);
-                    row_data_str.push(format!("<c r=\"{cell_name}\"{style}><v>{v}</v></c>"));
+                    row_data_str.push(format!(
+                        "<c r=\"{cell_name}\"{style}>{data_table_formula}<v>{v}</v></c>"
+                    ));
                 }
                 Cell::ErrorCell { ei, s }
                 | Cell::SpillCell {
@@ -150,7 +193,7 @@ pub(crate) fn get_worksheet_xml(
                 } => {
                     let style = get_cell_style_attribute(*s);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"e\"{style}><v>{ei}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"e\"{style}>{data_table_formula}<v>{ei}</v></c>"
                     ));
                 }
                 Cell::SharedString { si, s } => {
@@ -161,7 +204,7 @@ pub(crate) fn get_worksheet_xml(
                     // Cell on A1 contains a string (t="s") of style="1". The string is the 6th in the list of shared strings
                     let style = get_cell_style_attribute(*s);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"s\"{style}><v>{si}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"s\"{style}>{data_table_formula}<v>{si}</v></c>"
                     ));
                 }
                 Cell::CellFormula {
@@ -271,7 +314,7 @@ pub(crate) fn get_worksheet_xml(
                     let style = get_cell_style_attribute(*s);
                     let escaped_v = escape_xml(v);
                     row_data_str.push(format!(
-                        "<c r=\"{cell_name}\" t=\"str\"{style}><v>{escaped_v}</v></c>"
+                        "<c r=\"{cell_name}\" t=\"str\"{style}>{data_table_formula}<v>{escaped_v}</v></c>"
                     ));
                 }
                 // The difference between dynamic and array formulas is that dynamic formulas have cm="1"
