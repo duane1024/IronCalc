@@ -99,7 +99,9 @@ impl Model<'_> {
             // return to their real (non-substituted) values, and so formulas that
             // consume this table's outputs observe them before the next table.
             // (Input cells were never mutated, so there is nothing to restore.)
-            self.evaluate_workbook_cells();
+            // Iterative settle so a circular workbook re-converges after the
+            // per-scenario recomputes dirtied the governing/intermediate cells.
+            self.evaluate_workbook_cells_iterative();
         }
     }
 

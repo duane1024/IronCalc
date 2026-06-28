@@ -3089,21 +3089,49 @@ impl<'a> Model<'a> {
     /// Installs `overrides` for the duration of the recompute and always clears
     /// it afterwards, so the redirection never leaks onto the normal recalc path.
     ///
-    /// TODO(non-persisting eval): `recompute_cells` clears the whole memo and
-    /// persists intermediate formula results back into the grid, so the caller
-    /// must run an `evaluate_workbook_cells()` settle pass afterwards to undo the
-    /// dirtied governing/intermediate cells. The design target (big-design
-    /// KTD2/KTD4) is a non-persisting, input-cone-scoped evaluation that avoids
-    /// both the full memo clear and the settle pass — but that needs a
-    /// reverse-dependency structure the engine does not maintain yet.
+    /// When iterative calculation is enabled and the governing cone is circular,
+    /// the recompute is itself iterated to convergence per scenario via
+    /// [`Model::recompute_cells_iterative`].
+    ///
+    /// TODO(perf): `recompute_cells` clears the whole memo and persists
+    /// intermediate results into the grid, so `compute_data_tables` runs a settle
+    /// pass afterwards. The design target (big-design KTD2/KTD4) is a
+    /// non-persisting, input-cone-scoped evaluation — needs a reverse-dependency
+    /// structure the engine does not maintain yet.
     pub(crate) fn recompute_with_overrides(
         &mut self,
         targets: &[CellReferenceIndex],
         overrides: HashMap<(u32, i32, i32), CalcResult>,
     ) -> Vec<CalcResult> {
         self.data_table_overrides = Some(overrides);
-        let results = self.recompute_cells(targets);
+        let results = if self.workbook.settings.calc_properties.iterate {
+            self.recompute_cells_iterative(targets)
+        } else {
+            self.recompute_cells(targets)
+        };
         self.data_table_overrides = None;
+        results
+    }
+
+    /// Iterative counterpart of [`Model::recompute_cells`] for data-table
+    /// scenarios whose governing cone contains circular references. Repeats the
+    /// demand-driven recompute of `targets` — which transitively re-evaluates
+    /// and persists the cone, so each pass seeds from the previous one — until
+    /// the target values stop changing by more than `iterate_delta`, or
+    /// `iterate_count` passes elapse. Warm-starts from the cone's current values.
+    fn recompute_cells_iterative(&mut self, targets: &[CellReferenceIndex]) -> Vec<CalcResult> {
+        let max_iterations = self.workbook.settings.calc_properties.iterate_count.max(1);
+        let delta = self.workbook.settings.calc_properties.iterate_delta;
+
+        let mut results = self.recompute_cells(targets);
+        for _ in 1..max_iterations {
+            let next = self.recompute_cells(targets);
+            let converged = Self::calc_results_converged(&results, &next, delta);
+            results = next;
+            if converged {
+                break;
+            }
+        }
         results
     }
 
@@ -3170,10 +3198,10 @@ impl<'a> Model<'a> {
     /// consecutive passes is within `iterate_delta`, or after `iterate_count`
     /// passes — keeping the last values, matching Excel (no convergence error).
     ///
-    /// TODO(scope): this is a whole-workbook fixpoint (big-design Doc 3); it is
-    /// not yet composed with data-table substitution, so a data table whose
-    /// governing cone is circular will use last-converged (warm-start) values
-    /// rather than re-iterating per scenario.
+    /// Data tables compose with this: when iteration is enabled,
+    /// `recompute_with_overrides` runs its own per-scenario fixpoint
+    /// (`recompute_cells_iterative`), and `compute_data_tables` settles with the
+    /// iterative sweep too.
     pub(crate) fn evaluate_workbook_cells_iterative(&mut self) {
         if !self.workbook.settings.calc_properties.iterate {
             self.evaluate_workbook_cells();
@@ -3223,6 +3251,23 @@ impl<'a> Model<'a> {
         for (key, &current_value) in current {
             match previous.get(key) {
                 Some(&previous_value) if (current_value - previous_value).abs() <= delta => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// True when two sequences of target results are all numeric and pairwise
+    /// within `delta` (the convergence test for an iterative data-table solve).
+    /// Non-numeric results count as not-yet-converged, so iteration runs to
+    /// `iterate_count` and then keeps the last values (Excel behaviour).
+    fn calc_results_converged(previous: &[CalcResult], current: &[CalcResult], delta: f64) -> bool {
+        if previous.len() != current.len() {
+            return false;
+        }
+        for (p, c) in previous.iter().zip(current) {
+            match (p, c) {
+                (CalcResult::Number(a), CalcResult::Number(b)) if (a - b).abs() <= delta => {}
                 _ => return false,
             }
         }

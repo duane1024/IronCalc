@@ -2,6 +2,7 @@
 
 use crate::cell::CellValue;
 use crate::test::util::new_empty_model;
+use crate::types::DataTable;
 use crate::Model;
 
 fn number(model: &Model, row: i32, column: i32) -> f64 {
@@ -88,4 +89,48 @@ fn iteration_settings_are_readable() {
     assert!(properties.iterate);
     assert_eq!(properties.iterate_count, 42);
     assert_eq!(properties.iterate_delta, 0.5);
+}
+
+#[test]
+fn circular_data_table_converges_per_scenario_with_iteration() {
+    // The joint milestone: a one-variable data table whose governing formula
+    // sits over a circular cone. Balance model B1 = A1 + C1, C1 = B1 * 0.1, so
+    // B1 = A1 / 0.9. A1 is the column input cell; the table varies the principal
+    // (column D) and tabulates the balance via master formula E2 = B1.
+    let mut model = new_empty_model();
+    model._set("A1", "0"); // base principal, overridden per scenario
+    model._set("B1", "=A1 + C1");
+    model._set("C1", "=B1 * 0.1");
+    model._set("E2", "=B1"); // master/governing formula (row above the body)
+    model._set("D3", "100"); // input values down the column to the left
+    model._set("D4", "200");
+    model._set("D5", "900");
+    model.workbook.worksheets[0].data_tables.push(DataTable {
+        range: "E3:E5".to_string(),
+        two_dimensional: false,
+        row_oriented: false,
+        r1: "A1".to_string(),
+        r2: None,
+        calculate_always: false,
+    });
+
+    model.set_iterative_calculation(true, Some(200), Some(0.0001));
+    model.evaluate();
+
+    // Each scenario re-iterates the cone under its substituted principal.
+    assert!(
+        (number(&model, 3, 5) - 100.0 / 0.9).abs() < 0.01,
+        "E3 = {}",
+        number(&model, 3, 5)
+    );
+    assert!(
+        (number(&model, 4, 5) - 200.0 / 0.9).abs() < 0.01,
+        "E4 = {}",
+        number(&model, 4, 5)
+    );
+    assert!(
+        (number(&model, 5, 5) - 900.0 / 0.9).abs() < 0.01,
+        "E5 = {}",
+        number(&model, 5, 5)
+    );
 }
