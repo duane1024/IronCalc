@@ -61,6 +61,7 @@ export default defineConfig({
           },
           { text: "Using Styles", link: "/features/using-styles" },
           { text: "Cell Styles", link: "/features/cell-styles" },
+          { text: "Themes", link: "/features/themes" },
           { text: "Conditional Formatting", link: "/features/conditional-formatting" },
           { text: "Data Tables", link: "/features/data-tables" },
           { text: "Keyboard Shortcuts", link: "/features/keyboard-shortcuts" },
@@ -1468,10 +1469,6 @@ export default defineConfig({
               {
                 text: "LCM",
                 link: "/functions/math_and_trigonometry/lcm",
-              },
-              {
-                text: "LET",
-                link: "/functions/math_and_trigonometry/let",
               },
               {
                 text: "LN",

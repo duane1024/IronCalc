@@ -76,6 +76,137 @@ test("a range reference yields a single normalized active range", () => {
   });
 });
 
+test("distinct ranges get consecutive palette colors", () => {
+  const { activeRanges } = getFormulaHTML(model, "=SUM(A2:A5)+SUM(B2:B5)");
+  expect(activeRanges).toHaveLength(2);
+  // First range takes the first palette color...
+  expect(activeRanges[0].color).toBe(getColor(0));
+  // ...so the second distinct range should take the second one, not skip ahead.
+  expect(activeRanges[1].color).toBe(getColor(1));
+});
+
+test("a range does not skip a palette color for a following reference", () => {
+  const { activeRanges } = getFormulaHTML(model, "=SUM(A2:A5)+B7");
+  expect(activeRanges).toHaveLength(2);
+  expect(activeRanges[0].color).toBe(getColor(0));
+  expect(activeRanges[1].color).toBe(getColor(1));
+});
+
+// The reference-insertion hint is identified by its stable key/className.
+const isHint = (el: ReactElement): boolean =>
+  el.key === "reference-hint" ||
+  (el.props as { className?: string }).className === "insert-reference-hint";
+
+test("no cursor argument never renders the reference hint", () => {
+  const { html } = getFormulaHTML(model, "=SUM(");
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("a caret in reference mode renders a hint after the caret", () => {
+  // `=SUM(|` — the grammar expects a reference here and none follows.
+  const { html } = getFormulaHTML(model, "=SUM(", 5);
+  const hints = html.filter(isHint);
+  expect(hints).toHaveLength(1);
+  // It is appended at the very end (the caret is past every token).
+  expect(isHint(html[html.length - 1])).toBe(true);
+  // The hint carries no formula text, so the reconstructed formula is unchanged.
+  expect(
+    html
+      .filter((el) => !isHint(el))
+      .map(text)
+      .join(""),
+  ).toBe("=SUM(");
+});
+
+test("the hint is inserted before the token following the caret", () => {
+  // `=SUM(|)` — caret between `(` and `)`; expects a reference, `)` is not one.
+  const { html } = getFormulaHTML(model, "=SUM()", 5);
+  const hintIndex = html.findIndex(isHint);
+  expect(hintIndex).toBeGreaterThanOrEqual(0);
+  // The closing paren span comes right after the hint.
+  expect(text(html[hintIndex + 1])).toBe(")");
+});
+
+test("no hint when a reference already follows the caret", () => {
+  // `=SUM(|A1)` — a reference sits immediately after the caret.
+  const { html } = getFormulaHTML(model, "=SUM(A1)", 5);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("no hint when the caret is not in reference mode", () => {
+  // `=1+1|` — the grammar does not expect a reference at the end here.
+  const { html } = getFormulaHTML(model, "=1+1", 4);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("a hint appears after a trailing operator", () => {
+  // `=A1+|` — after the `+` a reference is expected and none follows.
+  const { html } = getFormulaHTML(model, "=A1+", 4);
+  const hints = html.filter(isHint);
+  expect(hints).toHaveLength(1);
+  expect(isHint(html[html.length - 1])).toBe(true);
+});
+
+// -----------------------------------------------------------------------------
+// The hint must not appear where the caret is NOT about to insert a fresh
+// reference. Each uses `=SUM(I7:I12,K18:K19)` (or a close variant) with `|` as
+// the caret. Cases 1-3 are handled here (JS placement); the nested-call case is
+// handled upstream by `getFormulaCompletion` no longer expecting a range there.
+// -----------------------------------------------------------------------------
+
+test("no hint with the caret before the leading '=' (|=SUM(...))", () => {
+  // `|=SUM(I7:I12,K18:K19)` — caret at 0, in front of the whole function call.
+  const { html } = getFormulaHTML(model, "=SUM(I7:I12,K18:K19)", 0);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("no hint with the caret right after '=' (=|SUM(...))", () => {
+  // `=|SUM(I7:I12,K18:K19)` — caret at 1, in front of the function name.
+  const { html } = getFormulaHTML(model, "=SUM(I7:I12,K18:K19)", 1);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("no hint in an empty trailing argument (=SUM(...,|))", () => {
+  // `=SUM(I7:I12,K18:K19,|)` — caret at 20, right after the trailing comma and
+  // immediately before `)`. Contrast with `=SUM(|)`, which does hint.
+  const { html } = getFormulaHTML(model, "=SUM(I7:I12,K18:K19,)", 20);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("no hint after a completed nested call (=SUM(A1, SUM(A3)|))", () => {
+  // `=SUM(A1, SUM(A3)|)` — caret at 16, just after the inner `)`.
+  const { html } = getFormulaHTML(model, "=SUM(A1, SUM(A3))", 16);
+  expect(html.some(isHint)).toBe(false);
+});
+
+test("an empty first argument still hints (=SUM(|)), unlike a trailing comma", () => {
+  // `=SUM(|)` — caret at 5, after `(` and before `)`: an insertable first
+  // argument, so the hint IS shown (the previous token is `(`, not a separator).
+  const { html } = getFormulaHTML(model, "=SUM()", 5);
+  const hintIndex = html.findIndex(isHint);
+  expect(hintIndex).toBeGreaterThanOrEqual(0);
+  expect(text(html[hintIndex + 1])).toBe(")");
+});
+
+test("a trailing operator after a completed nested call still hints", () => {
+  // `=1+2*SUM(I3:J6,N13:O15+SUM(L12:L13)*|` — the dangling `*` expects a fresh
+  // operand, so a reference can be inserted at the end despite following a call.
+  const formula = "=1+2*SUM(I3:J6,N13:O15+SUM(L12:L13)*";
+  const { html } = getFormulaHTML(model, formula, formula.length);
+  const hints = html.filter(isHint);
+  expect(hints).toHaveLength(1);
+  expect(isHint(html[html.length - 1])).toBe(true);
+});
+
+test("an argument being added at the end still hints (=SUM(A1,|)", () => {
+  // `=SUM(A1,|` — caret at 8, at the end after a separator: a fresh argument is
+  // expected here, so the hint IS shown.
+  const { html } = getFormulaHTML(model, "=SUM(A1,", 8);
+  const hints = html.filter(isHint);
+  expect(hints).toHaveLength(1);
+  expect(isHint(html[html.length - 1])).toBe(true);
+});
+
 test("a trailing newline adds a trailing span", () => {
   const { html } = getFormulaHTML(model, "=A1\n");
   expect(text(html[html.length - 1])).toBe("\n");

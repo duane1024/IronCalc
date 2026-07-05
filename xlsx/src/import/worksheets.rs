@@ -13,8 +13,9 @@ use ironcalc_base::{
         utils::{column_to_number, parse_reference_a1},
     },
     types::{
-        ArrayKind, CalcProperties, Cell, Col, Color, Comment, DataTable, DefinedName, FormulaValue,
-        Row, SheetData, SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
+        ArrayKind, CalcProperties, Cell, Col, Color, Comment, DataTable, DefinedName, Dxf,
+        FormulaValue, Row, SheetData, SheetState, SpillValue, Table, Theme, Worksheet,
+        WorksheetView,
     },
 };
 use roxmltree::Node;
@@ -746,6 +747,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     shared_strings: &mut Vec<String>,
     defined_names: Vec<DefinedNameS>,
     theme: &Theme,
+    dxfs: &mut Vec<Dxf>,
 ) -> Result<(Worksheet, bool), XlsxError> {
     let sheet_name = &settings.name;
     let sheet_id = settings.id;
@@ -1170,7 +1172,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
 
     let merge_cells = load_merge_cells(ws)?;
 
-    let conditional_formatting = load_conditional_formatting(ws, theme)?;
+    let conditional_formatting = load_conditional_formatting(ws, theme, dxfs)?;
     // pageSetup
     // <pageSetup orientation="portrait" r:id="rId1"/>
 
@@ -1217,6 +1219,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     tables: &mut HashMap<String, Table>,
     shared_strings: &mut Vec<String>,
     theme: &Theme,
+    dxfs: &mut Vec<Dxf>,
 ) -> Result<(Vec<Worksheet>, u32), XlsxError> {
     // load comments and tables
     let mut comments = HashMap::new();
@@ -1274,6 +1277,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
                 shared_strings,
                 defined_names.clone(),
                 theme,
+                dxfs,
             )?;
             if is_selected {
                 selected_sheet = sheet_index;

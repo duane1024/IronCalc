@@ -75,7 +75,7 @@ export const useKeyDown = (
               cell.column,
               width,
               height,
-              cell.text + (cell.referencedRange?.str || ""),
+              workbookState.getEditingText(),
             );
             model.onArrowDown();
           } else {
@@ -84,7 +84,7 @@ export const useKeyDown = (
               cell.sheet,
               cell.row,
               cell.column,
-              cell.text + (cell.referencedRange?.str || ""),
+              workbookState.getEditingText(),
             );
             if (shiftKey) {
               model.onArrowUp();
@@ -98,13 +98,13 @@ export const useKeyDown = (
         }
         case "Tab": {
           // end edit and select cell to the right (or left if ShiftKey)
-          workbookState.clearEditingCell();
           model.setUserInput(
             cell.sheet,
             cell.row,
             cell.column,
-            cell.text + (cell.referencedRange?.str || ""),
+            workbookState.getEditingText(),
           );
+          workbookState.clearEditingCell();
           if (shiftKey) {
             model.onArrowLeft();
           } else {
@@ -527,6 +527,33 @@ export const useKeyDown = (
           // Excel does something similar to what we do with navigation keys
           cell.mode = "edit";
           workbookState.setEditingCell(cell);
+          return;
+        }
+        case "F4": {
+          const value = textarea.value;
+          // the model works in characters, the textarea in UTF-16 code units
+          const start = Array.from(
+            value.slice(0, textarea.selectionStart),
+          ).length;
+          const end = Array.from(value.slice(0, textarea.selectionEnd)).length;
+
+          const [newText, newStart, newEnd] = model.cycleReference(
+            value,
+            start,
+            end,
+          );
+          const newChars = Array.from(newText);
+          const selectionStart = newChars.slice(0, newStart).join("").length;
+          const selectionEnd = newChars.slice(0, newEnd).join("").length;
+
+          cell.text = newText;
+          workbookState.setEditingCell(cell);
+          setTimeout(() => {
+            textarea.setSelectionRange(selectionStart, selectionEnd);
+          }, 0);
+          event.stopPropagation();
+          event.preventDefault();
+          onTextUpdated();
           return;
         }
         default: {

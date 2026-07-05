@@ -34,11 +34,34 @@ function isDynamicAnchor(
   return typeof structure === "object" && "DynamicAnchor" in structure;
 }
 
+// A token that begins an operand: a value, a name/function, a reference/range,
+// or an opening delimiter of a grouped expression or array. When such a token
+// sits right after the caret there is already an operand there, so the caret is
+// not in an empty slot and the reference-insertion hint must not be shown (e.g.
+// `=|SUM(...)`, where the function name follows the caret).
+function tokenStartsOperand(token: TokenType): boolean {
+  if (typeof token === "object") {
+    return (
+      "Ident" in token ||
+      "Number" in token ||
+      "String" in token ||
+      "Boolean" in token ||
+      "Reference" in token ||
+      "Range" in token
+    );
+  }
+  return token === "LeftParenthesis" || token === "LeftBrace";
+}
+
+// The argument separator tokens (`,` in English locales, `;` otherwise).
+function tokenIsArgumentSeparator(token: TokenType): boolean {
+  return token === "Comma" || token === "Semicolon";
+}
+
 // Returns true when the cursor sits at a position where the formula grammar
 // would accept a reference or range, so that arrow keys / clicking a cell can
 // insert one. This asks the engine for a partial parse of the formula up to the
-// cursor (see `getFormulaCompletion`), which fixes the false positives of the
-// old heuristic (e.g. `="1+`, where the cursor is inside a string).
+// cursor (see `getFormulaCompletion`).
 export function isInReferenceMode(
   model: Model,
   text: string,
@@ -126,9 +149,20 @@ export function getColor(index: number, alpha = 1): string {
   return `rgba(${rgba[0]}, ${rgba[1]}, ${rgba[2]}, ${alpha})`;
 }
 
+// A placeholder shown when the caret sits at a position where a reference could
+// be inserted (e.g. `=SUM(|`). It carries no formula text; it only hints to the
+// user that arrow keys / clicking a cell will insert a reference here. The
+// `ic-insert-range-hint` class is a styling hook designers can restyle later.
+const referenceHint = (
+  <span key="reference-hint" className="ic-insert-range-hint">
+    {"  "}
+  </span>
+);
+
 function getFormulaHTML(
   model: Model,
   text: string,
+  cursor?: number,
 ): { html: JSX.Element[]; activeRanges: ActiveRange[] } {
   let html: JSX.Element[] = [];
   const activeRanges: ActiveRange[] = [];
@@ -140,10 +174,44 @@ function getFormulaHTML(
     const usedColors: Record<string, string> = {};
     const sheet = model.getSelectedSheet();
     const sheetList = model.getWorksheetsProperties().map((s) => s.name);
+
+    // The reference-insertion hint is shown when the caret is in "reference
+    // mode" (the grammar would accept a reference here) and no reference already
+    // sits immediately after the caret. We resolve where in the rendered spans
+    // it belongs by finding the first token starting at/after the caret.
+    const inReferenceMode =
+      cursor !== undefined && isInReferenceMode(model, text, cursor);
+    // Caret as a scalar offset into `formula` (drop the leading `=`).
+    const scalarCursor =
+      cursor === undefined ? -1 : Array.from(text.slice(0, cursor)).length - 1;
+    let hintHandled = false;
+
     for (let index = 0; index < tokenCount; index += 1) {
       const { token, start, end } = tokens[index];
       const isReference = tokenIsReferenceType(token);
       const isRange = tokenIsRangeType(token);
+
+      // The hint belongs right before the first token that begins at/after the
+      // caret. Suppress it when the caret is not actually in an empty operand
+      // slot:
+      //   * the following token already starts an operand (`=|SUM(...)`,
+      //     `=A1+|B2`) — the reference/value is there, nothing to insert;
+      //   * the caret sits in an empty trailing argument, i.e. right after a
+      //     separator and immediately before `)` (`=SUM(A1,|)`). Note this is
+      //     distinct from `=SUM(|)`, whose previous token is `(`, not a
+      //     separator, and which does mark an insertable first argument.
+      if (inReferenceMode && !hintHandled && start >= scalarCursor) {
+        const previousToken = index > 0 ? tokens[index - 1].token : undefined;
+        const emptyTrailingArgument =
+          token === "RightParenthesis" &&
+          previousToken !== undefined &&
+          tokenIsArgumentSeparator(previousToken);
+        if (!tokenStartsOperand(token) && !emptyTrailingArgument) {
+          html.push(referenceHint);
+        }
+        hintHandled = true;
+      }
+
       // is next token the spill operator? If so, we want to include it in the reference
       if (
         isReference &&
@@ -240,7 +308,6 @@ function getFormulaHTML(
             {sliceString(formula, start, end)}
           </span>,
         );
-        colorCount += 1;
 
         activeRanges.push({
           sheet: sheetIndex,
@@ -253,6 +320,10 @@ function getFormulaHTML(
       } else {
         html.push(<span key={index}>{sliceString(formula, start, end)}</span>);
       }
+    }
+    // The caret sits past every token (e.g. `=SUM(`): append the hint at the end.
+    if (inReferenceMode && !hintHandled) {
+      html.push(referenceHint);
     }
     html = [<span key="equals">=</span>].concat(html);
   } else {

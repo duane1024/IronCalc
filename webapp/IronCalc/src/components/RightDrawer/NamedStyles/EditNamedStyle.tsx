@@ -5,7 +5,7 @@ import type {
   Model,
 } from "@ironcalc/wasm";
 import { Check } from "lucide-react";
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../Button/Button";
 import { resolveColorToHex } from "../../ColorPicker/util";
@@ -16,6 +16,7 @@ import FormatStylePicker, {
   type FormatStyle,
 } from "../ConditionalFormatting/FormatStylePicker";
 import "./edit-named-style.css";
+import { getPreviewText } from "./named-styles-utils";
 
 export interface SaveError {
   nameError: string;
@@ -87,23 +88,16 @@ const EditNamedStyle = ({
     if (initialName) {
       return initialName;
     }
+    const prefix = t("named_styles.default_name_prefix");
     const existing = new Set(existingStyleNames.map((n) => n.toLowerCase()));
     let counter = 1;
-    let candidate = `Style${counter}`;
+    let candidate = `${prefix}${counter}`;
     while (existing.has(candidate.toLowerCase())) {
       counter++;
-      candidate = `Style${counter}`;
+      candidate = `${prefix}${counter}`;
     }
     return candidate;
   };
-
-  const [name, setName] = useState(getDefaultName);
-  const [nameError, setNameError] = useState("");
-  const [formatStyle, setFormatStyle] = useState<FormatStyle>(() =>
-    initFormatStyle(model, style),
-  );
-  const [numFmt, setNumFmt] = useState<string>(style.num_fmt);
-  const [customFmt, setCustomFmt] = useState("");
 
   const knownFormats = [
     NumberFormats.AUTO,
@@ -115,7 +109,28 @@ const EditNamedStyle = ({
     formatOptions.short_date,
     formatOptions.long_date,
   ];
+
+  const [name, setName] = useState(getDefaultName);
+  const [nameError, setNameError] = useState("");
+  const [formatStyle, setFormatStyle] = useState<FormatStyle>(() =>
+    initFormatStyle(model, style),
+  );
+  const [numFmt, setNumFmt] = useState<string>(style.num_fmt);
+  const [customFmt, setCustomFmt] = useState(() =>
+    knownFormats.includes(style.num_fmt) ? "" : style.num_fmt,
+  );
+  const [customFmtTouched, setCustomFmtTouched] = useState(false);
+  const customFmtInputRef = useRef<HTMLInputElement>(null);
+
   const isCustom = !knownFormats.includes(numFmt);
+  const wasCustomRef = useRef(isCustom);
+
+  useEffect(() => {
+    if (isCustom && !wasCustomRef.current) {
+      customFmtInputRef.current?.focus();
+    }
+    wasCustomRef.current = isCustom;
+  }, [isCustom]);
 
   const formatSelectOptions = [
     { value: NumberFormats.AUTO, label: t("toolbar.format_menu.auto") },
@@ -149,6 +164,7 @@ const EditNamedStyle = ({
 
   const handleFormatChange = (value: string) => {
     if (value === CUSTOM_VALUE) {
+      setCustomFmtTouched(false);
       setNumFmt(customFmt || "");
     } else {
       setNumFmt(value);
@@ -156,10 +172,12 @@ const EditNamedStyle = ({
   };
 
   const selectValue = isCustom ? CUSTOM_VALUE : numFmt;
-  const hasError = !!nameError || !name.trim();
+  const customFmtError = isCustom && !customFmt.trim();
+  const hasError = !!nameError || !name.trim() || customFmtError;
 
   const handleSave = () => {
     if (hasError) {
+      setCustomFmtTouched(true);
       return;
     }
     const newStyle = {
@@ -203,7 +221,7 @@ const EditNamedStyle = ({
             className="ic-edit-style-preview"
             style={formatStyleToPreview(formatStyle, currentTheme)}
           >
-            Aa
+            {getPreviewText(numFmt, formatOptions, t)}
           </div>
           <span className="ic-edit-style-header-box-text">
             {name.trim() || t("named_styles.new_style")}
@@ -213,8 +231,8 @@ const EditNamedStyle = ({
           <Input
             autoFocus
             type="text"
-            label="Name"
-            placeholder="Style name"
+            label={t("named_styles.name_label")}
+            placeholder={t("named_styles.name_placeholder")}
             value={name}
             error={!!nameError}
             helperText={nameError}
@@ -226,26 +244,36 @@ const EditNamedStyle = ({
           />
           <div className="ic-edit-style-format-group">
             <Select
-              label="Format"
+              label={t("named_styles.format_label")}
               value={selectValue}
               options={formatSelectOptions}
               onChange={handleFormatChange}
             />
             {isCustom && (
               <Input
+                ref={customFmtInputRef}
                 type="text"
-                placeholder='e.g. #,##0.00 or "€"#,##0'
+                placeholder={t("named_styles.custom_format_placeholder")}
                 value={customFmt}
+                error={customFmtTouched && customFmtError}
+                helperText={
+                  customFmtTouched && customFmtError
+                    ? t("named_styles.custom_format_required")
+                    : ""
+                }
                 onChange={(e) => {
                   setCustomFmt(e.target.value);
                   setNumFmt(e.target.value);
                 }}
+                onBlur={() => setCustomFmtTouched(true)}
                 onKeyDown={handleKeyDown}
               />
             )}
           </div>
           <div className="ic-edit-style-format-group">
-            <span className="ic-edit-style-label">Style</span>
+            <span className="ic-edit-style-label">
+              {t("named_styles.style_label")}
+            </span>
             <FormatStylePicker
               value={formatStyle}
               onChange={setFormatStyle}
