@@ -1,5 +1,6 @@
 use std::fs;
 
+use ironcalc_base::types::StyleIncludes;
 use ironcalc_base::Model;
 
 use crate::error::XlsxError;
@@ -181,13 +182,15 @@ fn test_named_styles() {
     let mut style = model.get_style_for_cell(0, 1, 1).unwrap();
     style.font.b = true;
     style.font.i = true;
-    assert!(model.set_cell_style(0, 1, 1, &style).is_ok());
-    let bold_style_index = model.get_cell_style_index(0, 1, 1).unwrap();
-    let e = model
-        .workbook
-        .styles
-        .add_named_cell_style("bold & italics", bold_style_index);
+    let e = model.workbook.styles.create_named_style(
+        "bold & italics",
+        &style,
+        StyleIncludes::default(),
+    );
     assert!(e.is_ok());
+    assert!(model
+        .set_cell_style_by_name(0, 1, 1, "bold & italics")
+        .is_ok());
 
     // noop
     model.evaluate();
@@ -195,12 +198,43 @@ fn test_named_styles() {
     let temp_file_name = "temp_file_test_named_styles.xlsx";
     save_to_xlsx(&model, temp_file_name).unwrap();
 
-    let model = load_from_xlsx(temp_file_name, "en", "UTC", "en").unwrap();
+    let mut model = load_from_xlsx(temp_file_name, "en", "UTC", "en").unwrap();
     assert!(model
         .workbook
         .styles
         .get_style_index_by_name("bold & italics")
         .is_ok());
+    // After the roundtrip the style record must still include every formatting
+    // category (in cellStyleXfs absent apply* attributes mean "included";
+    // exporting applyX="0" would make Excel treat the style as empty).
+    let cell_style = model
+        .workbook
+        .styles
+        .cell_styles
+        .iter()
+        .find(|cs| cs.name == "bold & italics")
+        .unwrap();
+    let record = &model.workbook.styles.cell_style_xfs[cell_style.xf_id as usize];
+    assert!(record.apply_number_format);
+    assert!(record.apply_font);
+    assert!(record.apply_fill);
+    assert!(record.apply_border);
+    assert!(record.apply_alignment);
+    assert!(record.apply_protection);
+
+    // The cell is still linked to the named style: updating it restyles the cell
+    let mut style = model.get_named_style("bold & italics").unwrap();
+    assert!(style.font.b);
+    style.font.u = true;
+    model
+        .update_named_style(
+            "bold & italics",
+            "bold & italics",
+            &style,
+            StyleIncludes::default(),
+        )
+        .unwrap();
+    assert!(model.get_style_for_cell(0, 1, 1).unwrap().font.u);
     fs::remove_file(temp_file_name).unwrap();
 }
 

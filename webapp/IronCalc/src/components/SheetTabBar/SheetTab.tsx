@@ -15,6 +15,7 @@ interface SheetTabProps {
   color: string;
   selected: boolean;
   onSelected: () => void;
+  canEdit: boolean;
   onColorChanged: (color: Color) => void;
   onRenamed: (name: string) => void;
   canDelete: boolean;
@@ -82,6 +83,9 @@ function SheetTab(props: SheetTabProps) {
   }
 
   const handleOpenMenu = (event: React.MouseEvent) => {
+    if (!props.canEdit) {
+      return;
+    }
     event.stopPropagation();
     event.preventDefault();
     if (menuOpen) {
@@ -95,6 +99,9 @@ function SheetTab(props: SheetTabProps) {
   };
 
   const handleContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!props.canEdit) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     onSelected();
@@ -108,6 +115,9 @@ function SheetTab(props: SheetTabProps) {
   };
 
   const handleStartEditing = () => {
+    if (!props.canEdit) {
+      return;
+    }
     setEditingName(name);
     setInputWidth(Math.max(name.length * 7 + 8, 6));
     setIsEditing(true);
@@ -202,17 +212,19 @@ function SheetTab(props: SheetTabProps) {
         ) : (
           <>
             <div className="ic-sheet-tab-name">{name}</div>
-            <button
-              ref={menuButtonRef}
-              className={`ic-sheet-tab-menu-button${menuOpen ? " ic-sheet-tab-menu-button--active" : ""}`}
-              onClick={handleOpenMenu}
-              type="button"
-              aria-label={t("sheet_tab.open_menu")}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              <ChevronDown />
-            </button>
+            {props.canEdit && (
+              <button
+                ref={menuButtonRef}
+                className={`ic-sheet-tab-menu-button${menuOpen ? " ic-sheet-tab-menu-button--active" : ""}`}
+                onClick={handleOpenMenu}
+                type="button"
+                aria-label={t("sheet_tab.open_menu")}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                <ChevronDown />
+              </button>
+            )}
           </>
         )}
       </div>

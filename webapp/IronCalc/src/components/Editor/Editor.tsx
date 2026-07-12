@@ -42,7 +42,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -53,6 +52,7 @@ import {
   getCompletion,
 } from "../FormulaHelper/formulaCompletion";
 import { Alert } from "../Modal";
+import { useMenuPosition } from "../utils/useMenuPosition";
 import type { WorkbookState } from "../workbookState";
 import useKeyDown from "./useKeyDown";
 import getFormulaHTML from "./util";
@@ -99,15 +99,11 @@ const Editor = (options: EditorOptions) => {
   const [text, setText] = useState(originalText);
   const [cursor, setCursor] = useState(originalText.length);
   const [formulaError, setFormulaError] = useState<string | null>(null);
-  // Formula helper popup state: the highlighted row in list mode, whether the
-  // user dismissed it with Escape, and the viewport position (from the textarea
-  // rect) where it is rendered via a portal, to escape `overflow: hidden`.
+  // Formula helper popup state: the highlighted row in list mode and whether
+  // the user dismissed it with Escape. The popup itself is rendered via a
+  // portal, to escape `overflow: hidden`.
   const [helperSelected, setHelperSelected] = useState(0);
   const [helperDismissed, setHelperDismissed] = useState(false);
-  const [helperPosition, setHelperPosition] = useState<{
-    left: number;
-    top: number;
-  } | null>(null);
 
   const formulaRef = useRef<HTMLDivElement>(null);
   const maskRef = useRef<HTMLDivElement>(null);
@@ -227,9 +223,18 @@ const Editor = (options: EditorOptions) => {
 
   const cell = workbookState.getEditingCell();
 
-  const showEditor = cell !== null || type === "formula-bar" ? "block" : "none";
+  const showEditor = cell !== null || type === "formula-bar";
   const mtext = cell ? workbookState.getEditingText() : originalText;
-  const styledFormula = getFormulaHTML(model, mtext, cursor).html;
+  // In read-only mode the formula is rendered as plain grey text
+  const styledFormula = canEdit
+    ? getFormulaHTML(model, mtext, cursor).html
+    : mtext;
+
+  // For now formula helper is only available in English, so we hide it for other languages.
+  // This is a temporary measure until we have a more robust solution for localization.
+  const language = model.getLanguage();
+  const locale = model.getLocale();
+  const helperAvailable = language === "en" && locale === "en";
 
   // The formula helper is shown while editing a formula in whichever editor
   // currently has focus — the cell editor or the formula bar (both render this
@@ -237,12 +242,14 @@ const Editor = (options: EditorOptions) => {
   // compute the completion here so the keyboard handler and the popup share one
   // source.
   const helperActive =
+    helperAvailable &&
     cell !== null &&
     cell.focus === type &&
     text.startsWith("=") &&
     !helperDismissed;
   const completion = helperActive ? getCompletion(model, text, cursor) : null;
-  const showHelper = completion !== null;
+
+  const showHelper = helperAvailable && completion !== null;
 
   // Reset the highlighted row whenever the formula or caret changes (typing,
   // clicking); arrow-key navigation is preventDefaulted so it does not land
@@ -256,18 +263,12 @@ const Editor = (options: EditorOptions) => {
     setHelperDismissed(false);
   }, [text]);
 
-  // Keep the popup anchored to the bottom-left of the textarea. `text`/`cursor`
-  // are listed so we re-measure as the editor grows, even though they are not
-  // read directly here.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on edit
-  useLayoutEffect(() => {
-    if (showHelper && textareaRef.current) {
-      const rect = textareaRef.current.getBoundingClientRect();
-      setHelperPosition({ left: rect.left, top: rect.bottom + 4 });
-    } else {
-      setHelperPosition(null);
-    }
-  }, [showHelper, text, cursor]);
+  // Anchor the popup to the textarea, flipping above / right-aligning it when
+  // it would overflow the viewport.
+  const { menuRef: helperRef, position: helperPosition } = useMenuPosition(
+    showHelper,
+    textareaRef,
+  );
 
   // Replace the partial function name with `NAME(` and place the caret inside.
   // Takes an explicit index so a row click can accept the row it lands on directly.
@@ -329,16 +330,7 @@ const Editor = (options: EditorOptions) => {
         message={formulaError ?? undefined}
       />
       <div
-        style={{
-          position: "relative",
-          width: "100%",
-          height: "100%",
-          overflow: "hidden",
-          display: showEditor,
-          background: "#FFF",
-          fontFamily: "var(--palette-sheet-default-cell-font-family)",
-          fontSize: "12px",
-        }}
+        className={`ic-editor-container${showEditor ? "" : " ic-editor-container--hidden"}${canEdit ? "" : " ic-editor-container--readonly"}`}
       >
         <div
           ref={maskRef}
@@ -427,14 +419,13 @@ const Editor = (options: EditorOptions) => {
           onCut={(event) => event.stopPropagation()}
         />
       </div>
-      {showHelper && helperPosition
+      {showHelper
         ? createAnchoredPortal(
             <div
+              ref={helperRef}
               style={{
                 position: "fixed",
-                left: helperPosition.left,
-                top: helperPosition.top,
-                zIndex: 1000,
+                ...helperPosition,
               }}
             >
               <FormulaHelper

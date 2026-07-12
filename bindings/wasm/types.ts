@@ -187,18 +187,18 @@ export enum BorderStyle {
 }
 
 interface BorderItem {
-  style: string;
+  style: BorderStyle;
   color?: Color;
 }
 
 interface CellStyleBorder {
   diagonal_up?: boolean;
   diagonal_down?: boolean;
-  left: BorderItem;
-  right: BorderItem;
-  top: BorderItem;
-  bottom: BorderItem;
-  diagonal: BorderItem;
+  left?: BorderItem;
+  right?: BorderItem;
+  top?: BorderItem;
+  bottom?: BorderItem;
+  diagonal?: BorderItem;
 }
 
 export type VerticalAlignment =
@@ -531,6 +531,16 @@ export interface FmtSettings {
   long_date_example: string;
   number_fmt: string;
   number_example: string;
+}
+
+/** The formatting categories a named style includes. */
+export interface StyleIncludes {
+  number_format: boolean;
+  font: boolean;
+  fill: boolean;
+  border: boolean;
+  alignment: boolean;
+  protection: boolean;
 }
 
 /** A named cell style (e.g. "Normal", "Heading 1", or a custom style). */

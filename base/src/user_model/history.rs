@@ -5,7 +5,8 @@ use bitcode::{Decode, Encode};
 use crate::{
     cf_types::CfRule,
     types::{
-        CalcProperties, Cell, Col, Color, DataTable, Row, SheetState, Style, Theme, Worksheet,
+        CalcProperties, Cell, Col, Color, DataTable, Row, SheetState, Style, StyleIncludes, Theme,
+        Worksheet,
     },
 };
 
@@ -69,6 +70,15 @@ pub(crate) enum Diff {
         column: i32,
         old_value: Box<Option<Style>>,
         new_value: Box<Style>,
+    },
+    // Unlike `SetCellStyle`, applying a named style is recorded by name so that
+    // redo re-links the cell to the style instead of copying its formatting.
+    ApplyNamedStyle {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        old_value: Box<Option<Style>>,
+        name: String,
     },
     // Column and Row diffs
     SetColumnWidth {
@@ -228,7 +238,8 @@ pub(crate) enum Diff {
     // Named style diffs
     CreateNamedStyle {
         name: String,
-        xf_id: i32,
+        style: Box<Style>,
+        includes: StyleIncludes,
     },
     DeleteNamedStyle {
         name: String,
@@ -237,8 +248,10 @@ pub(crate) enum Diff {
     UpdateNamedStyle {
         name: String,
         new_name: String,
-        old_xf_id: i32,
-        new_xf_id: i32,
+        old_style: Box<Style>,
+        new_style: Box<Style>,
+        old_includes: StyleIncludes,
+        new_includes: StyleIncludes,
     },
     // Conditional formatting diffs
     AddConditionalFormatting {

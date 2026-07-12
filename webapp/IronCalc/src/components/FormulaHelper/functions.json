@@ -493,7 +493,16 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["trials", "integer", "Total number of independent trials"],
+      ["probability_s", "number", "Probability of success on each trial"],
+      ["number_s", "integer", "Number of successes (lower bound of the range)"],
+      [
+        "number_s2*",
+        "integer",
+        "Upper bound of the range; if omitted, returns the probability of exactly number_s successes"
+      ]
+    ],
     "description": "Returns the probability that the number of successes in a binomial trial falls within a specified range. Use it when you want \"between k₁ and k₂ successes\" rather than an exact count.",
     "examples": [
       "=BINOM.DIST.RANGE(10, 0.5, 3, 7) returns P(3 ≤ X ≤ 7) for 10 fair coin flips."
@@ -503,7 +512,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["trials", "integer", "Total number of independent trials"],
+      ["probability_s", "number", "Probability of success on each trial"],
+      [
+        "alpha",
+        "number",
+        "Criterion value: the cumulative probability threshold, between 0 and 1"
+      ]
+    ],
     "description": "Returns the smallest number of successes such that the cumulative binomial probability reaches at least a given value. Use it to find the threshold count for a given confidence level in quality or acceptance sampling.",
     "examples": ["=BINOM.INV(10, 0.5, 0.75) returns the 75th-percentile count."]
   },
@@ -716,7 +733,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "The value at which to evaluate the distribution"],
+      ["deg_freedom", "integer", "Number of degrees of freedom"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability density function"
+      ]
+    ],
     "description": "Returns the chi-squared distribution probability (left-tailed CDF or PDF). Use it in goodness-of-fit tests and tests of independence when analyzing categorical data.",
     "examples": [
       "=CHISQ.DIST(5, 3, TRUE) returns the left-tail CDF at 5 with 3 degrees of freedom."
@@ -726,7 +751,10 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "The value at which to evaluate the distribution"],
+      ["deg_freedom", "integer", "Number of degrees of freedom"]
+    ],
     "description": "Returns the right-tailed chi-squared distribution probability. Use it to find the p-value for a chi-squared test statistic - values close to 0 indicate statistical significance.",
     "examples": ["=CHISQ.DIST.RT(5, 3) returns the right-tail probability."]
   },
@@ -734,7 +762,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Left-tail probability between 0 and 1 associated with the chi-squared distribution"
+      ],
+      ["deg_freedom", "integer", "Number of degrees of freedom"]
+    ],
     "description": "Returns the inverse of the left-tailed chi-squared distribution - the value at which the CDF equals a given probability. Use it to find percentile values or critical values for chi-squared tests.",
     "examples": [
       "=CHISQ.INV(0.95, 3) returns the 95th percentile with 3 degrees of freedom."
@@ -744,7 +779,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Right-tail probability between 0 and 1 associated with the chi-squared distribution"
+      ],
+      ["deg_freedom", "integer", "Number of degrees of freedom"]
+    ],
     "description": "Returns the inverse of the right-tailed chi-squared distribution. Use it to find the critical value at a given significance level for a chi-squared test.",
     "examples": [
       "=CHISQ.INV.RT(0.05, 3) returns the critical value at the 5% level."
@@ -754,10 +796,21 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "actual_range",
+        "range",
+        "The range of observed frequencies to test against expected values"
+      ],
+      [
+        "expected_range",
+        "range",
+        "The range of expected frequencies; must have the same number of data points as actual_range"
+      ]
+    ],
     "description": "Returns the p-value for a chi-squared test of independence between observed and expected frequencies. Use it to determine whether an association between two categorical variables is statistically significant.",
     "examples": [
-      "=CHISQ.TEST(observed_range, expected_range) returns the p-value."
+      "=CHISQ.TEST(actual_range, expected_range) returns the p-value."
     ]
   },
   "chitest": {
@@ -952,17 +1005,25 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["alpha", "number", "Significance level; e.g. 0.05 for 95% confidence"],
+      ["standard_dev", "number", "Population standard deviation"],
+      ["size", "integer", "Sample size"]
+    ],
     "description": "Returns the margin of error for a population mean using the normal distribution. Use it to build a confidence interval: the true mean is likely between AVERAGE ± CONFIDENCE.NORM.",
     "examples": [
-      "=CONFIDENCE.NORM(0.05, STDEV(A2:A100), COUNT(A2:A100)) returns the margin for a 95% confidence interval."
+      "=CONFIDENCE.NORM(0.05, STDEV.P(A2:A100), COUNT(A2:A100)) returns the margin for a 95% confidence interval."
     ]
   },
   "confidence.t": {
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["alpha", "number", "Significance level; e.g. 0.05 for 95% confidence"],
+      ["standard_dev", "number", "Sample standard deviation"],
+      ["size", "integer", "Sample size; must be greater than 1"]
+    ],
     "description": "Like CONFIDENCE.NORM but uses the Student's t-distribution, appropriate for small samples where the population standard deviation is unknown. Use it when your sample size is small (typically under 30).",
     "examples": [
       "=CONFIDENCE.T(0.05, STDEV(A2:A20), 20) returns the margin for 20 data points."
@@ -1763,15 +1824,28 @@
     "tier": 0,
     "category": 3,
     "tags": [],
-    "args": [],
-    "description": "Returns the error function integrated between 0 and a given value. Used in statistics and physics for normal distribution calculations and diffusion problems.",
+    "args": [
+      [
+        "lower_limit",
+        "number",
+        "The lower bound for integrating the error function"
+      ],
+      [
+        "upper_limit*",
+        "number",
+        "The upper bound; if omitted, integrates between 0 and lower_limit"
+      ]
+    ],
+    "description": "Returns the error function integrated between 0 and a given value, or between two limits. Used in statistics and physics for normal distribution calculations and diffusion problems.",
     "examples": ["=ERF(1) returns approximately 0.8427."]
   },
   "erf.precise": {
     "tier": 0,
     "category": 3,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "The value up to which to integrate the error function"]
+    ],
     "description": "A single-argument version of ERF that always integrates from 0 to the given upper limit, with higher numerical precision. Use it when you need the standard error function with more accuracy.",
     "examples": ["=ERF.PRECISE(1) returns approximately 0.8427."]
   },
@@ -1779,7 +1853,13 @@
     "tier": 0,
     "category": 3,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "x",
+        "number",
+        "The lower bound for integrating the complementary error function"
+      ]
+    ],
     "description": "Returns the complementary error function: 1 minus ERF. Use it when you need the probability that a value lies beyond a threshold in a normal distribution context.",
     "examples": ["=ERFC(1) returns approximately 0.1573."]
   },
@@ -1787,17 +1867,29 @@
     "tier": 0,
     "category": 3,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "x",
+        "number",
+        "The lower bound for integrating the complementary error function"
+      ]
+    ],
     "description": "A higher-precision version of ERFC. Use it in scientific and engineering applications where numerical accuracy is critical.",
     "examples": ["=ERFC.PRECISE(1) returns approximately 0.1573."]
   },
-  "errortype": {
+  "error.type": {
     "tier": 0,
     "category": 5,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "error_val",
+        "any",
+        "The error value to identify; usually a reference to a cell that may contain an error"
+      ]
+    ],
     "description": "Returns a number corresponding to the type of error in a cell (1 for #NULL!, 2 for #DIV/0!, etc.). Use it inside error-handling formulas to take different actions depending on which error occurred.",
-    "examples": ["=ERRORTYPE(A2) returns 2 if A2 contains #DIV/0!."]
+    "examples": ["=ERROR.TYPE(A2) returns 2 if A2 contains #DIV/0!."]
   },
   "even": {
     "tier": 0,
@@ -3125,14 +3217,15 @@
     "tags": [],
     "args": [
       [
-        "parameter",
-        "text",
-        "Name of the first parameter (subsequent arguments add more parameters)"
-      ],
-      [
-        "...",
+        "parameter*",
         "any",
-        "Additional parameter names, with the formula as the final argument"
+        "A name for a value passed to the function, e.g. x. Optional; add one per parameter (up to 253)."
+      ],
+      ["...", "any", "Additional parameter names."],
+      [
+        "calculation",
+        "any",
+        "The formula to evaluate using the parameters. Always the last argument."
       ]
     ],
     "description": "Defines a custom, reusable function with named parameters that you can store in the Name Manager and call like any built-in function. Use it to package a complex formula you repeat often into a named function, making your workbook easier to maintain and understand.",
