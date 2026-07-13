@@ -3,6 +3,13 @@
 use std::collections::HashMap;
 use std::vec::Vec;
 
+thread_local! {
+    /// Per-sheet formula-evaluation counters (perf instrumentation). `None`
+    /// when counting is disabled — see [`Model::eval_counting_start`].
+    static EVAL_COUNTS: std::cell::RefCell<Option<HashMap<u32, u64>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 use crate::expressions::parser::static_analysis::run_static_analysis_on_node;
 use crate::{
     calc_result::{CalcResult, Range},
@@ -1489,6 +1496,7 @@ impl<'a> Model<'a> {
                         }
                     }
                 }
+                Self::eval_count_bump(key.0);
                 // Clear the pre-existing spill area of a dynamic formula before re-evaluating.
                 // This must happen after the CellState check so that a recursive call from a
                 // spill cell does not wipe out spill cells that were just written.
@@ -3073,6 +3081,41 @@ impl<'a> Model<'a> {
         self.evaluate();
     }
 
+    /// Phase 1 of [`Model::evaluate`] alone: the (iterative, when enabled)
+    /// full-workbook formula sweep — no data tables, no conditional
+    /// formatting. Public so callers can own the data-table policy: Excel
+    /// itself has a `calcMode="autoNoTable"` where automatic recalculation
+    /// deliberately skips What-If data tables because of their cost, and a
+    /// workbook saved that way expects edits NOT to recompute its tables.
+    pub fn evaluate_formulas_only(&mut self) {
+        self.evaluate_workbook_cells_iterative();
+    }
+
+    /// Phase 2 of [`Model::evaluate`] alone: What-If data tables.
+    pub fn evaluate_data_tables_only(&mut self) {
+        self.compute_data_tables();
+    }
+
+    /// Demand-driven recompute of exactly `targets` (each `(sheet, row,
+    /// column)`) and, transitively, their precedent cone — nothing else.
+    /// Warm-starts from the values currently persisted in the grid and honors
+    /// the workbook's iterative-calculation settings (a circular cone is
+    /// iterated to convergence like [`Model::recompute_cells_iterative`]).
+    /// Evaluated values are persisted, so reads after this call observe the
+    /// refreshed cone. Cells outside the cone keep their previous values —
+    /// the caller owns that staleness contract.
+    pub fn recompute_target_cells(&mut self, targets: &[(u32, i32, i32)]) {
+        let refs: Vec<CellReferenceIndex> = targets
+            .iter()
+            .map(|&(sheet, row, column)| CellReferenceIndex { sheet, row, column })
+            .collect();
+        if self.workbook.settings.calc_properties.iterate {
+            self.recompute_cells_iterative(&refs);
+        } else {
+            self.recompute_cells(&refs);
+        }
+    }
+
     pub(crate) fn recompute_cells(&mut self, targets: &[CellReferenceIndex]) -> Vec<CalcResult> {
         self.cells.clear();
         self.support.clear();
@@ -3124,13 +3167,21 @@ impl<'a> Model<'a> {
         let delta = self.workbook.settings.calc_properties.iterate_delta;
 
         let mut results = self.recompute_cells(targets);
+        let mut passes = 1u32;
         for _ in 1..max_iterations {
             let next = self.recompute_cells(targets);
+            passes += 1;
             let converged = Self::calc_results_converged(&results, &next, delta);
             results = next;
             if converged {
                 break;
             }
+        }
+        if std::env::var_os("IRONCALC_TRACE").is_some() {
+            eprintln!(
+                "[recompute] {} targets converged in {passes} passes",
+                targets.len()
+            );
         }
         results
     }
@@ -3209,18 +3260,97 @@ impl<'a> Model<'a> {
         }
         let max_iterations = self.workbook.settings.calc_properties.iterate_count.max(1);
         let delta = self.workbook.settings.calc_properties.iterate_delta;
+        let trace = std::env::var_os("IRONCALC_TRACE").is_some();
 
         let mut previous = self.numeric_snapshot();
         for iteration in 0..max_iterations {
+            let sweep_start = std::time::Instant::now();
             self.evaluate_workbook_cells();
+            let sweep = sweep_start.elapsed();
+            let snapshot_start = std::time::Instant::now();
             let current = self.numeric_snapshot();
+            let snapshot = snapshot_start.elapsed();
             // Require at least two passes before declaring convergence, so we do
             // not stop prematurely when the pass-0 seed happens to match.
-            if iteration >= 1 && Self::snapshots_converged(&previous, &current, delta) {
+            let converged =
+                iteration >= 1 && Self::snapshots_converged(&previous, &current, delta);
+            if trace {
+                let (changed, max_delta) = Self::snapshot_drift(&previous, &current);
+                eprintln!(
+                    "[iterate] pass {iteration}: sweep {sweep:.2?}, snapshot {snapshot:.2?} \
+                     ({} numeric cells, {changed} changed >delta, max |Δ| {max_delta:.6}), \
+                     converged={converged}",
+                    current.len()
+                );
+            }
+            if converged {
                 break;
             }
             previous = current;
         }
+    }
+
+    /// Perf instrumentation: when counting is enabled (see
+    /// [`Model::eval_counting_start`]), record one formula evaluation on
+    /// `sheet`. A no-op (one thread-local Option check) when disabled.
+    #[inline]
+    fn eval_count_bump(sheet: u32) {
+        EVAL_COUNTS.with(|counts| {
+            if let Some(map) = counts.borrow_mut().as_mut() {
+                *map.entry(sheet).or_insert(0) += 1;
+            }
+        });
+    }
+
+    /// Start counting formula evaluations per sheet (perf instrumentation;
+    /// thread-local). Counts every memo-miss evaluation of a formula cell,
+    /// i.e. actual evaluations, not memoized reads.
+    pub fn eval_counting_start() {
+        EVAL_COUNTS.with(|counts| *counts.borrow_mut() = Some(HashMap::new()));
+    }
+
+    /// Stop counting and return the per-sheet formula-evaluation counts
+    /// accumulated since [`Model::eval_counting_start`].
+    pub fn eval_counting_take() -> Vec<(u32, u64)> {
+        EVAL_COUNTS.with(|counts| {
+            let mut result: Vec<(u32, u64)> = counts
+                .borrow_mut()
+                .take()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            result.sort_by(|a, b| b.1.cmp(&a.1));
+            result
+        })
+    }
+
+    /// Trace helper: how many cells moved by more than `iterate_delta` between
+    /// two snapshots (including cells appearing/disappearing), and the largest
+    /// absolute change among cells present in both.
+    fn snapshot_drift(
+        previous: &HashMap<(u32, i32, i32), f64>,
+        current: &HashMap<(u32, i32, i32), f64>,
+    ) -> (usize, f64) {
+        let mut changed = 0usize;
+        let mut max_delta = 0f64;
+        for (key, &value) in current {
+            match previous.get(key) {
+                Some(&prev) => {
+                    let d = (value - prev).abs();
+                    if d > max_delta {
+                        max_delta = d;
+                    }
+                    if d > 0.001 {
+                        changed += 1;
+                    }
+                }
+                None => changed += 1,
+            }
+        }
+        changed += previous.len().saturating_sub(
+            previous.keys().filter(|k| current.contains_key(*k)).count(),
+        );
+        (changed, max_delta)
     }
 
     /// Snapshot of every cell that currently holds a numeric value, keyed by
@@ -3257,10 +3387,14 @@ impl<'a> Model<'a> {
         true
     }
 
-    /// True when two sequences of target results are all numeric and pairwise
-    /// within `delta` (the convergence test for an iterative data-table solve).
-    /// Non-numeric results count as not-yet-converged, so iteration runs to
-    /// `iterate_count` and then keeps the last values (Excel behaviour).
+    /// True when two sequences of target results are pairwise stable: numeric
+    /// pairs within `delta` (the convergence test for an iterative solve), and
+    /// non-numeric pairs (text, booleans, blanks, same-kind errors) unchanged.
+    /// Non-numeric targets cannot iterate toward a fixpoint, so treating an
+    /// unchanged non-numeric result as converged keeps a mixed target set
+    /// (e.g. a display range containing labels and blanks) from forcing the
+    /// iteration to run all the way to `iterate_count`. A pair that changes
+    /// kind between passes counts as not-yet-converged.
     fn calc_results_converged(previous: &[CalcResult], current: &[CalcResult], delta: f64) -> bool {
         if previous.len() != current.len() {
             return false;
@@ -3268,6 +3402,12 @@ impl<'a> Model<'a> {
         for (p, c) in previous.iter().zip(current) {
             match (p, c) {
                 (CalcResult::Number(a), CalcResult::Number(b)) if (a - b).abs() <= delta => {}
+                (CalcResult::String(a), CalcResult::String(b)) if a == b => {}
+                (CalcResult::Boolean(a), CalcResult::Boolean(b)) if a == b => {}
+                (CalcResult::EmptyCell, CalcResult::EmptyCell)
+                | (CalcResult::EmptyArg, CalcResult::EmptyArg) => {}
+                (CalcResult::Error { error: a, .. }, CalcResult::Error { error: b, .. })
+                    if a == b => {}
                 _ => return false,
             }
         }
