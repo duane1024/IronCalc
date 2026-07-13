@@ -256,38 +256,28 @@ enum ParseReferenceError {
 }
 
 // This parses Sheet1!AS23 into sheet, column and row
-// FIXME: This is buggy. Does not check that is a valid sheet name
+// The sheet separator is the LAST '!': Excel allows '!' inside sheet names
+// (only \ / ? * [ ] : are forbidden), so a sheet named "!CAP" produces the
+// context "!CAP!B7" and splitting at the first '!' would shred it.
 // There is a similar named function in ironcalc_base. We probably should fix both at the same time.
-// NB: Maybe use regexes for this?
 fn parse_reference(s: &str) -> Result<CellReferenceRC, ParseReferenceError> {
-    let mut sheet_name = "".to_string();
+    let (sheet_name, cell) = match s.rfind('!') {
+        Some(idx) => (&s[..idx], &s[idx + 1..]),
+        None => ("", s),
+    };
     let mut column = "".to_string();
     let mut row = "".to_string();
-    let mut state = "sheet"; // "sheet", "col", "row"
-    for ch in s.chars() {
-        match state {
-            "sheet" => {
-                if ch == '!' {
-                    state = "col"
-                } else {
-                    sheet_name.push(ch);
-                }
-            }
-            "col" => {
-                if ch.is_ascii_alphabetic() {
-                    column.push(ch);
-                } else {
-                    state = "row";
-                    row.push(ch);
-                }
-            }
-            _ => {
-                row.push(ch);
-            }
+    let mut in_row = false;
+    for ch in cell.chars() {
+        if !in_row && ch.is_ascii_alphabetic() {
+            column.push(ch);
+        } else {
+            in_row = true;
+            row.push(ch);
         }
     }
     Ok(CellReferenceRC {
-        sheet: sheet_name,
+        sheet: sheet_name.to_string(),
         row: row.parse::<i32>().map_err(ParseReferenceError::RowError)?,
         column: column_to_number(&column).map_err(ParseReferenceError::ColumnError)?,
     })
@@ -1299,5 +1289,19 @@ mod tests {
         assert!(cell_reference.is_ok());
         let cell_reference = cell_reference.unwrap();
         assert_eq!(cell_reference.sheet, "📈 Overview");
+    }
+
+    #[test]
+    fn parse_reference_sheet_name_containing_bang() {
+        // Excel allows '!' in sheet names; the separator is the LAST '!'.
+        let cell_reference = parse_reference("!CAP!B7").unwrap();
+        assert_eq!(cell_reference.sheet, "!CAP");
+        assert_eq!(cell_reference.row, 7);
+        assert_eq!(cell_reference.column, 2);
+
+        let cell_reference = parse_reference("A!B!C!AS23").unwrap();
+        assert_eq!(cell_reference.sheet, "A!B!C");
+        assert_eq!(cell_reference.row, 23);
+        assert_eq!(cell_reference.column, 45);
     }
 }
