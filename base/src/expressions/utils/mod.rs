@@ -256,14 +256,20 @@ pub fn is_valid_identifier(name: &str) -> bool {
 }
 
 fn name_needs_quoting(name: &str) -> bool {
-    let chars = name.chars();
-    // it contains any of these characters: ()'$,;-+{} or space
-    for (i, char) in chars.enumerate() {
-        if [' ', '(', ')', '\'', '$', ',', ';', '-', '+', '{', '}'].contains(&char) {
-            return true;
-        }
-        // if it starts with a number
-        if i == 0 && char.is_ascii_digit() {
+    // Allow-list, not block-list: quoting is always LEGAL in a formula, but a
+    // missing quote around a name like "SUMM_P&L" or "!CAP" (Excel forbids
+    // only \ / ? * [ ] : in sheet names) produces a formula that cannot be
+    // re-parsed. Only names matching the unquoted-identifier grammar -- a
+    // letter or '_' first, then letters/digits/'_'/'.' -- can skip quotes.
+    if name.is_empty() {
+        return true;
+    }
+    for (i, char) in name.chars().enumerate() {
+        let allowed = char == '_'
+            || char == '.'
+            || char.is_alphabetic()
+            || (i > 0 && char.is_ascii_digit());
+        if !allowed {
             return true;
         }
     }
@@ -304,6 +310,14 @@ mod tests {
         assert_eq!(quote_name("Data,2024"), "'Data,2024'");
         assert_eq!(quote_name("Data;2024"), "'Data;2024'");
         assert_eq!(quote_name("Data{2024}"), "'Data{2024}'");
+        // Excel forbids only \ / ? * [ ] : in sheet names — everything else
+        // can appear and must force quoting (found via a real analyst book
+        // with sheets named "!CAP" and "SUMM_P&L").
+        assert_eq!(quote_name("!CAP"), "'!CAP'");
+        assert_eq!(quote_name("SUMM_P&L"), "'SUMM_P&L'");
+        assert_eq!(quote_name("A=B"), "'A=B'");
+        assert_eq!(quote_name("P%L"), "'P%L'");
+        assert_eq!(quote_name("SUMM_P.L"), "SUMM_P.L");
 
         assert_eq!(quote_name("2024"), "'2024'");
         assert_eq!(quote_name("1Data"), "'1Data'");

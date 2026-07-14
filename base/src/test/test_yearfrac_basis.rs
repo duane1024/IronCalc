@@ -58,3 +58,28 @@ fn test_yearfrac_basis_3_actual_365() {
     // Same date
     assert_eq!(model._get_text("B3"), *"0");
 }
+
+#[test]
+fn test_yearfrac_basis_0_swaps_reversed_dates() {
+    let mut model = new_empty_model();
+
+    // Basis 0 (US 30/360) day-of-month rules are asymmetric: Dec 31 as the
+    // START collapses 31 -> 30 (190 days to Jul 10 2026), but as the END it
+    // stays 31 (189 days). Excel resolves reversed arguments by swapping the
+    // dates BEFORE the adjustments, so both orders must give 190/360.
+    model._set("A1", "=YEARFRAC(DATE(2025,12,31),DATE(2026,7,10))");
+    model._set("A2", "=YEARFRAC(DATE(2026,7,10),DATE(2025,12,31))");
+
+    model.evaluate();
+
+    for cell in ["Sheet1!A1", "Sheet1!A2"] {
+        if let Ok(CellValue::Number(v)) = model.get_cell_value_by_ref(cell) {
+            assert!(
+                (v - 190.0 / 360.0).abs() < 1e-10,
+                "{cell} = {v}, want 190/360"
+            );
+        } else {
+            panic!("Expected numeric value in {cell}");
+        }
+    }
+}

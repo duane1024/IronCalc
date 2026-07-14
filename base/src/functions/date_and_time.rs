@@ -1727,14 +1727,24 @@ impl<'a> Model<'a> {
         if !(2..=3).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let start_serial = match self.get_number(&args[0], cell) {
+        let mut start_serial = match self.get_number(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
-        let end_serial = match self.get_number(&args[1], cell) {
+        let mut end_serial = match self.get_number(&args[1], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
+        // Excel swaps the dates when start > end BEFORE the day-count
+        // adjustments. Taking |result| at the end is NOT equivalent: the
+        // 30/360 day-of-month rules are asymmetric (only the start day
+        // collapses 31 -> 30 unconditionally), so e.g.
+        // YEARFRAC(DATE(2026,7,10), DATE(2025,12,31)) must see Dec 31 as the
+        // START (190/360), not the end (189/360). The swap also keeps
+        // basis 1's year-range arithmetic ordered.
+        if start_serial > end_serial {
+            std::mem::swap(&mut start_serial, &mut end_serial);
+        }
         let basis = if args.len() == 3 {
             match self.get_number(&args[2], cell) {
                 Ok(f) => f as i32,

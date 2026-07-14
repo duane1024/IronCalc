@@ -93,9 +93,12 @@ impl Model<'_> {
             return;
         }
 
+        let trace = std::env::var_os("IRONCALC_TRACE").is_some();
         for table in &tables {
+            let scenarios_start = std::time::Instant::now();
             let mut outputs: Vec<(CellReferenceIndex, CalcResult)> = Vec::new();
             self.compute_one_data_table(table, &mut outputs);
+            let scenarios_elapsed = scenarios_start.elapsed();
             for (cell_reference, value) in &outputs {
                 let style = self
                     .workbook
@@ -113,7 +116,25 @@ impl Model<'_> {
             // (Input cells were never mutated, so there is nothing to restore.)
             // Iterative settle so a circular workbook re-converges after the
             // per-scenario recomputes dirtied the governing/intermediate cells.
+            let settle_start = std::time::Instant::now();
             self.evaluate_workbook_cells_iterative();
+            if trace {
+                let sheet_name = self
+                    .workbook
+                    .worksheet(table.sheet)
+                    .map(|ws| ws.get_name())
+                    .unwrap_or_default();
+                eprintln!(
+                    "[data-table] {sheet_name} rows {}..{} cols {}..{} ({} outputs): \
+                     scenarios {scenarios_elapsed:.2?}, settle {:.2?}",
+                    table.top,
+                    table.bottom,
+                    table.left,
+                    table.right,
+                    outputs.len(),
+                    settle_start.elapsed()
+                );
+            }
         }
     }
 
