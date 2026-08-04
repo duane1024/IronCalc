@@ -113,6 +113,50 @@
     "description": "Returns a cell address as a text string given a row number and column number. Use it to build dynamic cell references you can then pass to INDIRECT - for instance, constructing a reference from a formula-driven row and column.",
     "examples": ["=ADDRESS(2, 3) returns \"$C$2\"."]
   },
+  "amordegrc": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["cost", "number", "Purchase cost of the asset"],
+      ["date_purchased", "date", "Date the asset was bought"],
+      ["first_period", "date", "End date of the first accounting period"],
+      ["salvage", "number", "Residual value at the end of the asset's life"],
+      ["period", "integer", "Accounting period to depreciate, starting at 0"],
+      ["rate", "number", "Annual depreciation rate as a decimal"],
+      [
+        "basis*",
+        "integer",
+        "Year basis: 0=360-day NASD (default), 1=actual, 3=365-day, 4=360-day European; 2 is not allowed"
+      ]
+    ],
+    "description": "Returns the depreciation of an asset for one accounting period under the French declining-balance system, prorating the first period when the asset is bought part way through it. It works like AMORLINC but applies a coefficient set by the asset's life, so depreciation is heavier in the early periods.",
+    "examples": [
+      "=AMORDEGRC(10000, A2, B2, 1000, 1, 0.15) returns the second period's depreciation."
+    ]
+  },
+  "amorlinc": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["cost", "number", "Purchase cost of the asset"],
+      ["date_purchased", "date", "Date the asset was bought"],
+      ["first_period", "date", "End date of the first accounting period"],
+      ["salvage", "number", "Residual value at the end of the asset's life"],
+      ["period", "integer", "Accounting period to depreciate, starting at 0"],
+      ["rate", "number", "Annual depreciation rate as a decimal"],
+      [
+        "basis*",
+        "integer",
+        "Year basis: 0=360-day NASD (default), 1=actual, 3=365-day, 4=360-day European; 2 is not allowed"
+      ]
+    ],
+    "description": "Returns the depreciation of an asset for one accounting period under the French straight-line system, prorating the first period when the asset is bought part way through it. Each full period writes off the same amount, unlike AMORDEGRC which front-loads it.",
+    "examples": [
+      "=AMORLINC(10000, A2, B2, 1000, 1, 0.15) returns the second period's depreciation."
+    ]
+  },
   "and": {
     "tier": 0,
     "category": 6,
@@ -1053,7 +1097,7 @@
     "tags": [],
     "args": [
       ["array1", "number_or_range", "First dataset"],
-      ["...", "number_or_range", "Second dataset"]
+      ["array2", "number_or_range", "Second dataset"]
     ],
     "description": "Returns the Pearson correlation coefficient (r) between two datasets, ranging from −1 to 1. Use it to measure how strongly two variables move together - for instance, whether advertising spend correlates with sales.",
     "examples": [
@@ -1150,6 +1194,120 @@
     "description": "Counts cells that meet multiple conditions simultaneously. Use it when you need to count records matching two or more filters at once.",
     "examples": [
       "=COUNTIFS(B2:B100, \"West\", C2:C100, \">1000\") counts rows where region is West and sales exceed 1000."
+    ]
+  },
+  "coupdaybs": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the number of days from the start of the current coupon period to the settlement date. This is the span the seller has already earned interest over, so it drives the accrued interest a buyer must pay on top of the price.",
+    "examples": [
+      "=COUPDAYBS(A2, B2, 2, 0) returns the days elapsed in the coupon period at settlement."
+    ]
+  },
+  "coupdays": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the total number of days in the coupon period that contains the settlement date. It is the denominator when working out what fraction of a coupon has accrued, so COUPDAYBS divided by COUPDAYS gives the share the seller has earned.",
+    "examples": [
+      "=COUPDAYS(A2, B2, 2, 0) returns 180 for a semiannual bond on a 30/360 basis."
+    ]
+  },
+  "coupdaysnc": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the number of days from the settlement date to the next coupon date. It tells a buyer how long they must wait for the first interest payment, and completes the coupon period alongside COUPDAYBS.",
+    "examples": [
+      "=COUPDAYSNC(A2, B2, 2, 0) returns the days remaining until the next coupon is paid."
+    ]
+  },
+  "coupncd": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention; accepted but not used"]
+    ],
+    "description": "Returns the first coupon date falling after the settlement date, counting back from maturity at the given frequency. The result is a serial number, so format the cell as a date to read it.",
+    "examples": [
+      "=COUPNCD(A2, B2, 2) returns the date of the next coupon payment after settlement."
+    ]
+  },
+  "coupnum": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention; accepted but not used"]
+    ],
+    "description": "Returns how many coupon payments are still due between settlement and maturity, counting the next one and rounding up to a whole coupon. Use it to size a bond's remaining cash flows.",
+    "examples": [
+      "=COUPNUM(A2, B2, 2) returns 10 for a semiannual bond with five years left to run."
+    ]
+  },
+  "couppcd": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention; accepted but not used"]
+    ],
+    "description": "Returns the most recent coupon date at or before the settlement date, the point from which interest has been accruing to the seller. The result is a serial number, so format the cell as a date to read it.",
+    "examples": [
+      "=COUPPCD(A2, B2, 2) returns the date of the last coupon paid before settlement."
     ]
   },
   "covar": {
@@ -1741,6 +1899,27 @@
       "=DSUM(A1:D100, \"Revenue\", F1:F2) sums all revenue rows where the criteria are met."
     ]
   },
+  "duration": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["coupon", "number", "Annual coupon rate as a decimal"],
+      ["yld", "number", "Annual yield as a decimal"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the Macaulay duration of a bond paying periodic interest: the weighted-average time in years until its cash flows are received. Use it to compare how sensitive different bonds are to a change in interest rates.",
+    "examples": [
+      "=DURATION(A2, B2, 0.05, 0.04, 2, 0) returns the duration in years of a semiannual bond."
+    ]
+  },
   "dvar": {
     "tier": 0,
     "category": 1,
@@ -1977,7 +2156,16 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "The value at which to evaluate the function"],
+      ["deg_freedom1", "integer", "The numerator degrees of freedom"],
+      ["deg_freedom2", "integer", "The denominator degrees of freedom"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability density function"
+      ]
+    ],
     "description": "Returns the F-distribution probability (left-tailed CDF or PDF). Use it in ANOVA and regression analysis when evaluating variance ratios.",
     "examples": [
       "=F.DIST(2.5, 5, 10, TRUE) returns the left-tail probability for an F-statistic of 2.5."
@@ -1987,7 +2175,11 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "The value at which to evaluate the function"],
+      ["deg_freedom1", "integer", "The numerator degrees of freedom"],
+      ["deg_freedom2", "integer", "The denominator degrees of freedom"]
+    ],
     "description": "Returns the right-tailed F-distribution probability. Use it to find the p-value for an F-test - values near 0 indicate that the variances are significantly different.",
     "examples": ["=F.DIST.RT(2.5, 5, 10) returns the right-tail p-value."]
   },
@@ -1995,7 +2187,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Left-tail probability between 0 and 1 associated with the F cumulative distribution"
+      ],
+      ["deg_freedom1", "integer", "The numerator degrees of freedom"],
+      ["deg_freedom2", "integer", "The denominator degrees of freedom"]
+    ],
     "description": "Returns the inverse of the left-tailed F-distribution - the F-value at which the CDF equals a given probability. Use it to find critical values for F-tests or to construct F-distribution confidence intervals.",
     "examples": ["=F.INV(0.95, 5, 10) returns the 95th-percentile F-value."]
   },
@@ -2003,7 +2203,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Right-tail probability between 0 and 1 associated with the F cumulative distribution"
+      ],
+      ["deg_freedom1", "integer", "The numerator degrees of freedom"],
+      ["deg_freedom2", "integer", "The denominator degrees of freedom"]
+    ],
     "description": "Returns the inverse of the right-tailed F-distribution. Use it to find the critical F-value at a given significance level for an F-test.",
     "examples": [
       "=F.INV.RT(0.05, 5, 10) returns the critical value at the 5% level."
@@ -2013,7 +2221,10 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["array1", "range", "The first array or range of data"],
+      ["array2", "range", "The second array or range of data"]
+    ],
     "description": "Returns the p-value for an F-test comparing the variances of two datasets. Use it to determine whether two groups have significantly different variability before applying certain other statistical tests.",
     "examples": ["=F.TEST(A2:A20, B2:B20) returns the two-tailed p-value."]
   },
@@ -2109,9 +2320,21 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like FIND but counts positions in bytes rather than characters - relevant for double-byte East Asian character sets. Use it when working with mixed single- and double-byte text in CJK locales.",
-    "examples": ["=FINDB(\"A\", A2) returns the byte position of \"A\"."]
+    "args": [
+      [
+        "find_text",
+        "text",
+        "Substring to locate (case-sensitive, no wildcards)"
+      ],
+      ["within_text", "text", "String to search inside"],
+      [
+        "start_num*",
+        "integer",
+        "1-based character position to start the search from; defaults to 1"
+      ]
+    ],
+    "description": "Finds the position of one text string within another, case-sensitively. Equivalent to FIND; provided for compatibility with double-byte (East Asian) locales.",
+    "examples": ["=FINDB(\"A\", A2) returns the position of \"A\"."]
   },
   "finv": {
     "tier": 0,
@@ -2129,7 +2352,13 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "x",
+        "number",
+        "The value to transform; must be greater than -1 and less than 1"
+      ]
+    ],
     "description": "Returns the Fisher transformation of a correlation coefficient r, converting it to a value with approximately normal distribution. Use it to construct confidence intervals for r or to test whether two correlations are significantly different.",
     "examples": ["=FISHER(0.8) returns approximately 1.099."]
   },
@@ -2137,7 +2366,13 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "y",
+        "number",
+        "The value for which to perform the inverse of the transformation"
+      ]
+    ],
     "description": "Returns the inverse of the Fisher transformation - converts a Fisher z-value back to a correlation coefficient. Use it after computing confidence intervals in z-space to report results as r-values.",
     "examples": ["=FISHERINV(1.099) returns approximately 0.8."]
   },
@@ -2316,6 +2551,25 @@
     "description": "Returns the value of the gamma function Γ(x), which extends the factorial to non-integer values (Γ(n) = (n-1)! for positive integers). Use it in advanced probability and statistics.",
     "examples": ["=GAMMA(5) returns 24 (= 4!)."]
   },
+  "gamma.dist": {
+    "tier": 0,
+    "category": 9,
+    "tags": [],
+    "args": [
+      ["x", "number", "Non-negative value to evaluate"],
+      ["alpha", "number", "Shape parameter (must be positive)"],
+      ["beta", "number", "Scale parameter (must be positive)"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution; FALSE for the probability density"
+      ]
+    ],
+    "description": "Returns the gamma distribution probability (CDF or PDF). Use it to model waiting times and other positive-valued data.",
+    "examples": [
+      "=GAMMA.DIST(2, 2, 1, TRUE) returns the cumulative probability."
+    ]
+  },
   "gamma.inv": {
     "tier": 0,
     "category": 9,
@@ -2330,7 +2584,7 @@
   },
   "gammadist": {
     "tier": 0,
-    "category": 9,
+    "category": 11,
     "tags": [],
     "args": [
       ["x", "number", "Non-negative value to evaluate"],
@@ -2379,7 +2633,13 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "z",
+        "number",
+        "The number of standard deviations from the mean at which to evaluate the probability"
+      ]
+    ],
     "description": "Returns the probability that a standard normal variable falls between 0 and z - equal to Φ(z) − 0.5. Use it when you need the one-sided probability from the mean to a specific z-score.",
     "examples": ["=GAUSS(1) returns approximately 0.3413."]
   },
@@ -2411,7 +2671,14 @@
     "tier": 0,
     "category": 3,
     "tags": [],
-    "args": [],
+    "args": [
+      ["number", "number", "The value to compare against the step threshold"],
+      [
+        "step*",
+        "number",
+        "The cutoff to compare against; defaults to zero when omitted"
+      ]
+    ],
     "description": "Returns 1 if a number is greater than or equal to a step value, and 0 otherwise. Use it to implement threshold comparisons in engineering models without writing an IF formula.",
     "examples": ["=GESTEP(5, 3) returns 1; =GESTEP(2, 3) returns 0."]
   },
@@ -2545,7 +2812,21 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["sample_s", "integer", "Count of successful draws in the sample"],
+      ["number_sample", "integer", "How many items were drawn"],
+      [
+        "population_s",
+        "integer",
+        "Total successes available in the whole population"
+      ],
+      ["number_pop", "integer", "Total size of the population"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability mass function"
+      ]
+    ],
     "description": "Returns the hypergeometric distribution probability - the probability of exactly k successes when drawing n items without replacement from a population of N containing K successes. Use it for quality sampling when items are not returned after each draw.",
     "examples": [
       "=HYPGEOM.DIST(3, 10, 20, 100, FALSE) returns the exact probability."
@@ -2954,7 +3235,7 @@
     "args": [
       ["known_ys", "number_or_range", "Dependent (y) data points"],
       [
-        "...",
+        "known_xs",
         "number_or_range",
         "Independent (x) data points, same count as known_ys"
       ]
@@ -3128,7 +3409,14 @@
     "tier": 0,
     "category": 8,
     "tags": [],
-    "args": [],
+    "args": [
+      ["number", "number", "The value you want to round up"],
+      [
+        "significance*",
+        "number",
+        "The multiple to round up to; defaults to 1 when omitted"
+      ]
+    ],
     "description": "Rounds a number up toward positive infinity to the nearest multiple of significance. Equivalent to CEILING.PRECISE - provided for ISO standard compatibility.",
     "examples": ["=ISO.CEILING(4.3, 0.5) returns 4.5."]
   },
@@ -3207,7 +3495,10 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["number1", "number_or_range", "First value or range"],
+      ["...", "number_or_range", "Additional values or ranges"]
+    ],
     "description": "Returns the kurtosis of a dataset - a measure of how heavy the tails are compared to a normal distribution. Positive kurtosis means more extreme outliers than normal; negative means fewer. Use it to understand whether your data has unusual outlier behavior.",
     "examples": ["=KURT(A2:A100) returns the excess kurtosis."]
   },
@@ -3270,9 +3561,16 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like LEFT but counts characters in bytes. Use it in East Asian locales where double-byte characters each take two bytes.",
-    "examples": ["=LEFTB(A2, 4) returns the leftmost 4 bytes."]
+    "args": [
+      ["text", "text", "Source string"],
+      [
+        "num_chars*",
+        "integer",
+        "How many characters to take from the start; defaults to 1 when omitted"
+      ]
+    ],
+    "description": "Returns the first characters of a text string. Equivalent to LEFT; provided for compatibility with double-byte (East Asian) locales.",
+    "examples": ["=LEFTB(A2, 4) returns the leftmost 4 characters."]
   },
   "len": {
     "tier": 0,
@@ -3286,9 +3584,9 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Returns the number of bytes in a text string, counting double-byte characters as two. Use it in East Asian locales to measure byte length rather than character count.",
-    "examples": ["=LENB(A2) returns the byte length."]
+    "args": [["text", "text", "String whose character count you want"]],
+    "description": "Returns the number of characters in a text string. Equivalent to LEN; provided for compatibility with double-byte (East Asian) locales.",
+    "examples": ["=LENB(A2) returns the character count."]
   },
   "let": {
     "tier": 0,
@@ -3422,7 +3720,24 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "x",
+        "number",
+        "Point at which to evaluate the distribution; must be positive"
+      ],
+      ["mean", "number", "Mean of the variable's natural logarithm"],
+      [
+        "standard_dev",
+        "number",
+        "Standard deviation of the variable's natural logarithm"
+      ],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability density function"
+      ]
+    ],
     "description": "Returns the log-normal distribution probability (CDF or PDF). Use it to model data that is the product of many positive factors - stock prices, income distributions, particle sizes.",
     "examples": [
       "=LOGNORM.DIST(4, 1, 0.5, TRUE) returns the cumulative probability."
@@ -3432,7 +3747,19 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Cumulative probability between 0 and 1 for the log-normal distribution"
+      ],
+      ["mean", "number", "Mean of the variable's natural logarithm"],
+      [
+        "standard_dev",
+        "number",
+        "Standard deviation of the variable's natural logarithm"
+      ]
+    ],
     "description": "Returns the inverse of the log-normal cumulative distribution - the value at a given percentile. Use it to find percentile values for a log-normally distributed variable.",
     "examples": ["=LOGNORM.INV(0.9, 1, 0.5) returns the 90th percentile."]
   },
@@ -3600,6 +3927,27 @@
     "description": "Returns the determinant of a square matrix. Use it in linear algebra - for instance, to check whether a system of equations has a unique solution (a non-zero determinant) or to apply Cramer's rule.",
     "examples": ["=MDETERM(A1:D4) returns the determinant of the 4×4 matrix."]
   },
+  "mduration": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["coupon", "number", "Annual coupon rate as a decimal"],
+      ["yld", "number", "Annual yield as a decimal"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the modified Macaulay duration of a bond with an assumed par value of $100. It rescales DURATION by the yield per period, giving the approximate percentage change in price for a one-point change in yield.",
+    "examples": [
+      "=MDURATION(A2, B2, 0.05, 0.04, 2, 0) returns the modified duration of a semiannual bond."
+    ]
+  },
   "median": {
     "tier": 0,
     "category": 9,
@@ -3631,9 +3979,17 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like MID but counts positions and lengths in bytes rather than characters. Used for double-byte character processing in East Asian locales.",
-    "examples": ["=MIDB(A2, 3, 4) returns 4 bytes starting at byte position 3."]
+    "args": [
+      ["text", "text", "Source string"],
+      [
+        "start_num",
+        "integer",
+        "1-based character position where the extraction begins"
+      ],
+      ["num_chars", "integer", "How many characters to pull from that position"]
+    ],
+    "description": "Returns a run of characters from the middle of a text string. Equivalent to MID; provided for compatibility with double-byte (East Asian) locales.",
+    "examples": ["=MIDB(A2, 3, 4) returns 4 characters starting at position 3."]
   },
   "min": {
     "tier": 0,
@@ -3868,7 +4224,20 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "number_f",
+        "integer",
+        "How many failures occur before the successes are reached"
+      ],
+      ["number_s", "integer", "The target number of successes to stop at"],
+      ["probability_s", "number", "Chance of success on each individual trial"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability mass function"
+      ]
+    ],
     "description": "Returns the negative binomial distribution probability - the probability of exactly k failures before achieving the r-th success. Use it in reliability testing and sequential sampling scenarios.",
     "examples": [
       "=NEGBINOM.DIST(5, 3, 0.5, FALSE) returns the probability of 5 failures before the 3rd success."
@@ -3906,11 +4275,24 @@
       "=NETWORKDAYS(A2, B2, Holidays) returns the count of business days, skipping dates listed in the Holidays range."
     ]
   },
-  "networkdaysintl": {
+  "networkdays.intl": {
     "tier": 0,
     "category": 2,
     "tags": [],
-    "args": [],
+    "args": [
+      ["start_date", "date", "First day of the period"],
+      ["end_date", "date", "Last day of the period"],
+      [
+        "weekend*",
+        "any",
+        "Weekend number code or 7-character day mask; defaults to Saturday and Sunday"
+      ],
+      [
+        "holidays*",
+        "range",
+        "Optional list of dates to exclude as non-working days"
+      ]
+    ],
     "description": "Like NETWORKDAYS, but lets you define which days of the week are the weekend using a mask or preset code. Use it for international teams where the weekend might be Friday–Saturday or another combination.",
     "examples": [
       "=NETWORKDAYS.INTL(A2, B2, 7, Holidays) treats Friday and Saturday as the weekend."
@@ -4162,6 +4544,100 @@
     "description": "Rounds a number up to the nearest odd integer. Use it when you need to ensure a value is odd - for example, certain packaging, layout, or algorithm requirements.",
     "examples": ["=ODD(4) returns 5; =ODD(-4) returns -5."]
   },
+  "oddfprice": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["issue", "date", "Issue date of the security"],
+      ["first_coupon", "date", "First coupon date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["yld", "number", "Annual yield as a decimal"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the price per $100 face value of a security whose first period is odd, meaning the first coupon covers a shorter or longer span than the regular ones. Use it for bonds issued between coupon dates, where PRICE would misstate the value.",
+    "examples": [
+      "=ODDFPRICE(A2, B2, C2, D2, 0.05, 0.04, 100, 2, 0) prices a bond with a short first coupon."
+    ]
+  },
+  "oddfyield": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["issue", "date", "Issue date of the security"],
+      ["first_coupon", "date", "First coupon date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["pr", "number", "Price per $100 face value"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the annual yield of a security whose first period is odd, meaning the first coupon covers a shorter or longer span than the regular ones. It is the inverse of ODDFPRICE: the yield at which the bond's cash flows discount back to pr.",
+    "examples": [
+      "=ODDFYIELD(A2, B2, C2, D2, 0.05, 98, 100, 2, 0) returns the yield of a bond with a short first coupon bought below par."
+    ]
+  },
+  "oddlprice": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["last_interest", "date", "Last coupon date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["yld", "number", "Annual yield as a decimal"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the price per $100 face value of a security whose last period is odd, meaning the final coupon covers a shorter or longer span than the regular ones. Use it for bonds that mature between coupon dates, where PRICE would misstate the value.",
+    "examples": [
+      "=ODDLPRICE(A2, B2, C2, 0.05, 0.04, 100, 2, 0) prices a bond with an irregular final coupon."
+    ]
+  },
+  "oddlyield": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["last_interest", "date", "Last coupon date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["pr", "number", "Price per $100 face value"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the annual yield of a security whose last period is odd, meaning the final coupon covers a shorter or longer span than the regular ones. It is the inverse of ODDLPRICE: the yield implied by buying the bond at pr and holding it to maturity.",
+    "examples": [
+      "=ODDLYIELD(A2, B2, C2, 0.05, 98, 100, 2, 0) returns the yield of a bond with an irregular final coupon bought below par."
+    ]
+  },
   "offset": {
     "tier": 0,
     "category": 7,
@@ -4219,7 +4695,7 @@
     "tags": [],
     "args": [
       ["array1", "number_or_range", "First dataset"],
-      ["...", "number_or_range", "Second dataset, same size as array1"]
+      ["array2", "number_or_range", "Second dataset, same size as array1"]
     ],
     "description": "Returns the Pearson product-moment correlation coefficient between two datasets. Functionally identical to CORREL - use either one to measure the linear relationship between two variables.",
     "examples": [
@@ -4262,6 +4738,19 @@
     ],
     "description": "Returns the k-th percentile of a dataset, including the 0th (minimum) and 100th (maximum) percentiles.",
     "examples": ["=PERCENTILE.INC(A2:A20, 0.9) returns the 90th percentile."]
+  },
+  "percentof": {
+    "tier": 0,
+    "category": 8,
+    "tags": [],
+    "args": [
+      ["data_subset", "number_or_range", "The values making up the subset"],
+      ["data_all", "number_or_range", "The values making up the whole set"]
+    ],
+    "description": "Returns the share a subset represents of a whole, equivalent to =SUM(data_subset)/SUM(data_all). Mostly used inside GROUPBY and PIVOTBY. The result is a fraction, so format the cell as a percentage.",
+    "examples": [
+      "=PERCENTOF(B2:B5, B2:B20) returns the share the first four values contribute to the whole range."
+    ]
   },
   "percentrank": {
     "tier": 0,
@@ -4421,7 +4910,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "integer", "Number of events to evaluate the probability for"],
+      ["mean", "number", "Expected average number of events"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability mass function"
+      ]
+    ],
     "description": "Returns the Poisson distribution probability for a given number of events and average rate. Use it to model the probability of a count of rare, independent events - customer arrivals, server requests, or defects per unit.",
     "examples": [
       "=POISSON.DIST(3, 5, FALSE) returns P(X=3) when the average is 5 events."
@@ -4465,6 +4962,28 @@
     "description": "Returns the principal portion of a specific loan payment. Use it alongside IPMT to understand how much of a given payment reduces the outstanding balance.",
     "examples": [
       "=PPMT(rate, period, nper, pv) returns the principal for that period."
+    ]
+  },
+  "price": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["yld", "number", "Annual yield as a decimal"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the price per $100 face value of a security that pays periodic interest. Use it to value a coupon bond at a given yield: the price comes out above 100 when the coupon beats the yield, and below when it trails.",
+    "examples": [
+      "=PRICE(A2, B2, 0.05, 0.04, 100, 2, 0) prices a semiannual bond yielding less than its coupon."
     ]
   },
   "pricedisc": {
@@ -4876,10 +5395,23 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like REPLACE but counts positions and lengths in bytes. Used for double-byte character processing in East Asian locales.",
+    "args": [
+      ["old_text", "text", "Original string"],
+      [
+        "start_num",
+        "integer",
+        "1-based position of the first character to replace"
+      ],
+      ["num_chars", "integer", "Number of characters to remove from old_text"],
+      [
+        "new_text",
+        "text",
+        "String to insert in place of the removed characters"
+      ]
+    ],
+    "description": "Replaces part of a text string with another string. Equivalent to REPLACE; provided for compatibility with double-byte (East Asian) locales.",
     "examples": [
-      "=REPLACEB(A2, 3, 2, \"AB\") replaces 2 bytes starting at byte 3."
+      "=REPLACEB(A2, 3, 2, \"AB\") replaces 2 characters starting at position 3."
     ]
   },
   "rept": {
@@ -4914,9 +5446,16 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like RIGHT but counts characters in bytes. Used in East Asian locale text processing.",
-    "examples": ["=RIGHTB(A2, 4) returns the rightmost 4 bytes."]
+    "args": [
+      ["text", "text", "Source string"],
+      [
+        "num_chars*",
+        "integer",
+        "How many characters to take from the end; defaults to 1 when omitted"
+      ]
+    ],
+    "description": "Returns the last characters of a text string. Equivalent to RIGHT; provided for compatibility with double-byte (East Asian) locales.",
+    "examples": ["=RIGHTB(A2, 4) returns the rightmost 4 characters."]
   },
   "roman": {
     "tier": 0,
@@ -5018,7 +5557,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["known_ys", "number_or_range", "Dependent (y) data points"],
+      [
+        "known_xs",
+        "number_or_range",
+        "Independent (x) data points, same count as known_ys"
+      ]
+    ],
     "description": "Returns the square of the Pearson correlation coefficient (R²) - the proportion of variance in y explained by x. Use it to evaluate how well a linear regression fits your data; R²=1 means a perfect fit.",
     "examples": ["=RSQ(B2:B20, A2:A20) returns R² for the linear relationship."]
   },
@@ -5066,10 +5612,22 @@
     "tier": 0,
     "category": 10,
     "tags": [],
-    "args": [],
-    "description": "Like SEARCH but counts positions in bytes for East Asian locales.",
+    "args": [
+      [
+        "find_text",
+        "text",
+        "Substring to locate; supports the wildcards ? and *"
+      ],
+      ["within_text", "text", "String to search inside"],
+      [
+        "start_num*",
+        "integer",
+        "1-based character position to start from; defaults to 1"
+      ]
+    ],
+    "description": "Finds the position of one text string within another, case-insensitively, with support for the wildcards ? and *. Equivalent to SEARCH; provided for compatibility with double-byte (East Asian) locales.",
     "examples": [
-      "=SEARCHB(\"A\", A2) returns the byte position of the first case-insensitive match of \"A\"."
+      "=SEARCHB(\"A\", A2) returns the position of the first case-insensitive match of \"A\"."
     ]
   },
   "sec": {
@@ -5119,7 +5677,16 @@
     "tier": 0,
     "category": 8,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "Value fed into the power series"],
+      ["n", "number", "Starting exponent applied to x"],
+      ["m", "number", "Amount the exponent grows by for each successive term"],
+      [
+        "coefficients",
+        "range",
+        "Multipliers for each term; the count determines how many terms the series has"
+      ]
+    ],
     "description": "Returns the sum of a power series: Σ aᵢ × x^(n+m×i). Use it in engineering and mathematics to evaluate polynomial approximations of functions.",
     "examples": [
       "=SERIESSUM(x, 0, 1, coefficients) evaluates the polynomial at x using the given coefficient array."
@@ -5230,7 +5797,7 @@
     "args": [
       ["known_ys", "number_or_range", "Dependent (y) data points"],
       [
-        "...",
+        "known_xs",
         "number_or_range",
         "Independent (x) data points, same count as known_ys"
       ]
@@ -5423,7 +5990,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["known_ys", "number_or_range", "Dependent (y) data points"],
+      [
+        "known_xs",
+        "number_or_range",
+        "Independent (x) data points, same count as known_ys"
+      ]
+    ],
     "description": "Returns the standard error of the predicted y values in a linear regression - a measure of how accurate the regression line's predictions are on average. Use it to gauge the precision of your linear model.",
     "examples": [
       "=STEYX(B2:B20, A2:A20) returns the standard error of the estimate."
@@ -5540,7 +6114,7 @@
     "tags": [],
     "args": [
       ["array_x", "number_or_range", "X values"],
-      ["...", "number_or_range", "Y values, same count as array_x"]
+      ["array_y", "number_or_range", "Y values, same count as array_x"]
     ],
     "description": "Returns the sum of differences of squares of corresponding values in two arrays: Σ(x²−y²). Used in specialized mathematical and physics calculations.",
     "examples": ["=SUMX2MY2(A2:A5, B2:B5) computes Σ(A²−B²)."]
@@ -5551,7 +6125,7 @@
     "tags": [],
     "args": [
       ["array_x", "number_or_range", "X values"],
-      ["...", "number_or_range", "Y values, same count as array_x"]
+      ["array_y", "number_or_range", "Y values, same count as array_x"]
     ],
     "description": "Returns the sum of sums of squares of corresponding values in two arrays: Σ(x²+y²). Useful for computing the sum of squared magnitudes of paired values.",
     "examples": ["=SUMX2PY2(A2:A5, B2:B5) computes Σ(A²+B²)."]
@@ -5562,7 +6136,7 @@
     "tags": [],
     "args": [
       ["array_x", "number_or_range", "X values"],
-      ["...", "number_or_range", "Y values, same count as array_x"]
+      ["array_y", "number_or_range", "Y values, same count as array_x"]
     ],
     "description": "Returns the sum of squared differences of corresponding values in two arrays: Σ(x−y)². Use it to compute the total squared error between two sets of values - for example, between predictions and actuals.",
     "examples": ["=SUMXMY2(predicted, actual) returns Σ(pred−actual)²."]
@@ -5621,7 +6195,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "Point at which to evaluate the distribution"],
+      ["deg_freedom", "integer", "Number of degrees of freedom; at least 1"],
+      [
+        "cumulative",
+        "logical",
+        "TRUE for the cumulative distribution function; FALSE for the probability density function"
+      ]
+    ],
     "description": "Returns the Student's t-distribution probability (left-tailed CDF or PDF). Use it in hypothesis testing for small samples when the population standard deviation is unknown.",
     "examples": [
       "=T.DIST(2.0, 10, TRUE) returns the left-tail probability with 10 degrees of freedom."
@@ -5631,7 +6213,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "x",
+        "number",
+        "Point at which to evaluate the distribution; must be non-negative"
+      ],
+      ["deg_freedom", "integer", "Number of degrees of freedom; at least 1"]
+    ],
     "description": "Returns the two-tailed t-distribution probability for a given t-statistic. Use it for two-tailed t-tests - when you're testing whether a difference is non-zero in either direction.",
     "examples": ["=T.DIST.2T(2.0, 10) returns the two-tailed p-value."]
   },
@@ -5639,7 +6228,10 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["x", "number", "Point at which to evaluate the distribution"],
+      ["deg_freedom", "integer", "Number of degrees of freedom; at least 1"]
+    ],
     "description": "Returns the right-tailed t-distribution probability. Use it for one-tailed t-tests where you're testing whether a value is greater than a null hypothesis value.",
     "examples": ["=T.DIST.RT(2.0, 10) returns the right-tail p-value."]
   },
@@ -5647,7 +6239,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Left-tail probability between 0 and 1 for the t-distribution"
+      ],
+      ["deg_freedom", "integer", "Number of degrees of freedom; at least 1"]
+    ],
     "description": "Returns the inverse of the left-tailed t-distribution - the t-value at a given probability. Use it to find critical values for one-tailed tests or to construct confidence intervals.",
     "examples": [
       "=T.INV(0.95, 10) returns the one-tailed 95th-percentile t-value."
@@ -5657,7 +6256,14 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      [
+        "probability",
+        "number",
+        "Two-tailed probability between 0 and 1 for the t-distribution"
+      ],
+      ["deg_freedom", "integer", "Number of degrees of freedom; at least 1"]
+    ],
     "description": "Returns the inverse of the two-tailed t-distribution. Use it to find the critical t-value for a two-tailed hypothesis test at a given significance level.",
     "examples": [
       "=T.INV.2T(0.05, 10) returns the critical value for a 5% two-tailed test with 10 degrees of freedom."
@@ -5667,7 +6273,20 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["array1", "range", "The first data set"],
+      ["array2", "range", "The second data set"],
+      [
+        "tails",
+        "integer",
+        "Number of distribution tails: 1 for one-tailed, 2 for two-tailed"
+      ],
+      [
+        "type",
+        "integer",
+        "Test kind: 1 paired, 2 two-sample equal variance, 3 two-sample unequal variance"
+      ]
+    ],
     "description": "Returns the p-value for a Student's t-test comparing two datasets. Use it to determine whether the difference in means between two groups is statistically significant.",
     "examples": [
       "=T.TEST(A2:A20, B2:B20, 2, 2) performs a two-tailed, two-sample t-test."
@@ -6294,6 +6913,36 @@
     "description": "Like VAR.P but includes text and logical values. Use it for population variance over a mixed-type range.",
     "examples": ["=VARPA(A2:A100)."]
   },
+  "vdb": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["cost", "number", "Initial cost of the asset"],
+      ["salvage", "number", "Residual value at end of useful life"],
+      ["life", "number", "Number of periods in the asset's useful life"],
+      [
+        "start_period",
+        "number",
+        "First period to depreciate, in units of life"
+      ],
+      ["end_period", "number", "Last period to depreciate, in units of life"],
+      [
+        "factor*",
+        "number",
+        "Depreciation rate multiplier; defaults to 2 for double-declining balance"
+      ],
+      [
+        "no_switch*",
+        "logical",
+        "TRUE keeps declining balance throughout; FALSE (default) switches to straight line once that gives more"
+      ]
+    ],
+    "description": "Returns the depreciation of an asset over a span of periods using the variable declining balance method. Unlike DDB it covers a range rather than a single period, accepts partial periods, and by default switches to straight line once that writes off more.",
+    "examples": [
+      "=VDB(10000, 1000, 10, 0, 0.5) returns the depreciation for the first half of year one."
+    ]
+  },
   "vlookup": {
     "tier": 0,
     "category": 7,
@@ -6426,11 +7075,24 @@
       "=WORKDAY(A2, 10, Holidays) returns the date 10 business days after A2."
     ]
   },
-  "workdayintl": {
+  "workday.intl": {
     "tier": 0,
     "category": 2,
     "tags": [],
-    "args": [],
+    "args": [
+      ["start_date", "date", "Starting date"],
+      ["days", "integer", "Working days to advance; negative moves backward"],
+      [
+        "weekend*",
+        "any",
+        "Weekend number code or 7-character day mask; defaults to Saturday and Sunday"
+      ],
+      [
+        "holidays*",
+        "range",
+        "Optional list of additional non-working dates to skip"
+      ]
+    ],
     "description": "Like WORKDAY, but lets you define a custom weekend using a mask or preset code. Use it when your organization operates on a non-standard weekly schedule - for instance, a Friday–Saturday weekend.",
     "examples": [
       "=WORKDAY.INTL(A2, 10, 7, Holidays) treats Friday and Saturday as the weekend."
@@ -6595,6 +7257,28 @@
       "=YEARFRAC(A2, B2, 1) returns the actual fraction of a year between the two dates."
     ]
   },
+  "yield": {
+    "tier": 0,
+    "category": 4,
+    "tags": [],
+    "args": [
+      ["settlement", "date", "Settlement date of the security"],
+      ["maturity", "date", "Maturity date of the security"],
+      ["rate", "number", "Annual coupon rate as a decimal"],
+      ["pr", "number", "Price per $100 face value"],
+      ["redemption", "number", "Redemption value per $100 face value"],
+      [
+        "frequency",
+        "integer",
+        "Coupon payments per year: 1=annual, 2=semiannual, 4=quarterly"
+      ],
+      ["basis*", "integer", "Day-count convention (0=US 30/360 default)"]
+    ],
+    "description": "Returns the annual yield of a security that pays periodic interest, the return earned by holding a bond bought at a given price to maturity. It is the inverse of PRICE: the yield at which the bond's cash flows discount back to pr.",
+    "examples": [
+      "=YIELD(A2, B2, 0.05, 98, 100, 2, 0) returns the yield of a semiannual bond bought below par."
+    ]
+  },
   "yielddisc": {
     "tier": 0,
     "category": 4,
@@ -6632,7 +7316,15 @@
     "tier": 0,
     "category": 9,
     "tags": [],
-    "args": [],
+    "args": [
+      ["array", "range", "The data set to test the value against"],
+      ["x", "number", "Hypothesized population mean to test"],
+      [
+        "sigma*",
+        "number",
+        "Known population standard deviation; if omitted, the sample standard deviation is used"
+      ]
+    ],
     "description": "Returns the one-tailed p-value of a z-test - the probability that the sample mean is at least as extreme as observed, given a hypothesized population mean. Use it to test whether a sample mean is consistent with a known or assumed population mean.",
     "examples": [
       "=Z.TEST(A2:A30, 50, 10) tests the sample against a hypothesized mean of 50 with standard deviation 10."

@@ -216,6 +216,27 @@ pub struct UserModel<'a> {
     pause_evaluation: bool,
 }
 
+/// Given the index of the currently selected sheet, returns the index that same
+/// sheet occupies after the worksheet at `from` is moved to `to`. This lets the
+/// selection follow a sheet by identity across a reorder instead of pointing at
+/// whichever sheet lands in the old slot.
+pub(crate) fn selected_sheet_after_move(selected: u32, from: u32, to: u32) -> u32 {
+    if selected == from {
+        return to;
+    }
+    // Mirror `Model::move_sheet`: remove at `from`, then insert at `to`.
+    let after_remove = if selected > from {
+        selected - 1
+    } else {
+        selected
+    };
+    if after_remove >= to {
+        after_remove + 1
+    } else {
+        after_remove
+    }
+}
+
 impl<'a> Debug for UserModel<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UserModel").finish()
@@ -269,7 +290,7 @@ impl<'a> UserModel<'a> {
     /// Returns the internal representation of a model
     ///
     /// See also:
-    ///  * [Model::to_json_str]
+    ///  * [Model::to_bytes]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.model.to_bytes()
     }
@@ -286,6 +307,14 @@ impl<'a> UserModel<'a> {
 
     /// Sets the name of a workbook
     pub fn set_name(&mut self, name: &str) {
+        let old_value = self.model.workbook.name.clone();
+        if old_value == name {
+            return;
+        }
+        self.push_diff_list(vec![Diff::SetWorkbookName {
+            old_value,
+            new_value: name.to_string(),
+        }]);
         self.model.workbook.name = name.to_string();
     }
 
@@ -457,7 +486,7 @@ impl<'a> UserModel<'a> {
     /// Returns the content of a cell
     ///
     /// See also:
-    /// * [Model::get_cell_content]
+    /// * [Model::get_localized_cell_content]
     #[inline]
     pub fn get_cell_content(&self, sheet: u32, row: i32, column: i32) -> Result<String, String> {
         self.model.get_localized_cell_content(sheet, row, column)
@@ -589,6 +618,41 @@ impl<'a> UserModel<'a> {
         Ok(())
     }
 
+    /// Moves the worksheet at `sheet_index` to `new_index` within the workbook,
+    /// shifting the other sheets to accommodate. The moved worksheet ends up at
+    /// exactly `new_index`.
+    ///
+    /// The reorder is undoable/redoable, and the new order is preserved when the
+    /// workbook is saved. Cross-sheet formula references stay valid across the
+    /// move (sheet order is a position, not an identity — references key off the
+    /// sheet name/id). The selection follows the same sheet across the move.
+    ///
+    /// Moving a sheet to its current position is a no-op (no history entry). Fails
+    /// if either index is out of range.
+    ///
+    /// See also:
+    /// * [Model::move_sheet]
+    pub fn move_sheet(&mut self, sheet_index: u32, new_index: u32) -> Result<(), String> {
+        let sheet_count = self.model.workbook.worksheets.len() as u32;
+        if sheet_index >= sheet_count {
+            return Err(format!("Invalid sheet index {sheet_index}"));
+        }
+        if new_index >= sheet_count {
+            return Err(format!("Invalid target index {new_index}"));
+        }
+        if sheet_index == new_index {
+            return Ok(());
+        }
+        let selected = self.get_selected_sheet();
+        self.model.move_sheet(sheet_index, new_index)?;
+        self.set_selected_sheet(selected_sheet_after_move(selected, sheet_index, new_index))?;
+        self.push_diff_list(vec![Diff::MoveSheet {
+            sheet_index,
+            new_index,
+        }]);
+        Ok(())
+    }
+
     /// Hides sheet by index
     ///
     /// See also:
@@ -695,7 +759,7 @@ impl<'a> UserModel<'a> {
     /// Deletes the content in cells, but keeps the style
     ///
     /// See also:
-    /// * [Model::cell_clear_contents]
+    /// * [Model::range_clear_contents]
     pub fn range_clear_contents(&mut self, range: &Area) -> Result<(), String> {
         let sheet = range.sheet;
         // TODO: full rows/columns
@@ -933,7 +997,7 @@ impl<'a> UserModel<'a> {
     /// * `row` – first row to insert.
     /// * `row_count` – number of rows (> 0).
     ///
-    /// History: the method pushes `row_count` [`crate::user_model::history::Diff::InsertRow`]
+    /// History: the method pushes `row_count` `Diff::InsertRow`
     /// items **all using the same `row` index**.  Replaying those diffs (undo / redo)
     /// is therefore immune to the row-shifts that happen after each individual
     /// insertion.
@@ -959,7 +1023,7 @@ impl<'a> UserModel<'a> {
     /// * `column` – first column to insert.
     /// * `column_count` – number of columns (> 0).
     ///
-    /// History: pushes one [`crate::user_model::history::Diff::InsertColumn`]
+    /// History: pushes one `Diff::InsertColumn`
     /// per inserted column, all with the same `column` value, preventing index
     /// drift when the diffs are reapplied.
     ///
@@ -984,7 +1048,7 @@ impl<'a> UserModel<'a> {
 
     /// Deletes `row_count` rows starting at `row`.
     ///
-    /// History: a [`crate::user_model::history::Diff::DeleteRow`] is created for
+    /// History: a `Diff::DeleteRow` is created for
     /// each row, ordered **bottom → top**.  Undo therefore recreates rows from
     /// top → bottom and redo removes them bottom → top, avoiding index drift.
     ///
@@ -1038,7 +1102,7 @@ impl<'a> UserModel<'a> {
 
     /// Deletes `column_count` columns starting at `column`.
     ///
-    /// History: pushes one [`crate::user_model::history::Diff::DeleteColumn`]
+    /// History: pushes one `Diff::DeleteColumn`
     /// per column, **right → left**, so replaying the list is always safe with
     /// respect to index shifts.
     ///
@@ -1718,7 +1782,7 @@ impl<'a> UserModel<'a> {
 
     /// Returns the full extended style for a cell, including any conditional formatting overlay.
     ///
-    /// Identical border-adjacency logic as [`get_cell_style`] but applied to the CF-overlaid style.
+    /// Identical border-adjacency logic as [`Self::get_cell_style`] but applied to the CF-overlaid style.
     /// Use this when you need icon-set or data-bar decorations in addition to the base style.
     pub fn get_extended_cell_style(
         &self,
@@ -2153,8 +2217,25 @@ impl<'a> UserModel<'a> {
 mod tests {
     use crate::{
         types::{HorizontalAlignment, VerticalAlignment},
-        user_model::common::{horizontal, vertical},
+        user_model::common::{horizontal, selected_sheet_after_move, vertical},
     };
+
+    #[test]
+    fn test_selected_sheet_after_move() {
+        // The moved sheet is followed to its destination.
+        assert_eq!(selected_sheet_after_move(0, 0, 2), 2);
+        assert_eq!(selected_sheet_after_move(3, 3, 0), 0);
+
+        // A sheet between the source and destination shifts by one.
+        // [A,B,C,D], select C (2), move A (0) -> 2 => [B,C,A,D], C is at 1.
+        assert_eq!(selected_sheet_after_move(2, 0, 2), 1);
+        // [A,B,C,D], select A (0), move C (2) -> 0 => [C,A,B,D], A is at 1.
+        assert_eq!(selected_sheet_after_move(0, 2, 0), 1);
+
+        // A sheet outside the moved span keeps its index.
+        // [A,B,C,D], select D (3), move B (1) -> 2 => [A,C,B,D], D still at 3.
+        assert_eq!(selected_sheet_after_move(3, 1, 2), 3);
+    }
 
     #[test]
     fn test_vertical() {

@@ -1,6 +1,6 @@
 {
   "name": "@ironcalc/workbook",
-  "version": "0.7.1",
+  "version": "0.8.3",
   "type": "module",
   "sideEffects": [
     "*.css",
@@ -58,5 +58,10 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ironcalc/IronCalc.git",
+    "directory": "webapp/IronCalc"
+  }
 }

@@ -176,6 +176,38 @@ fn test_sheets() {
 }
 
 #[test]
+fn test_move_sheet_order_roundtrips() {
+    let mut model = new_empty_model();
+    model.add_sheet("Second").unwrap();
+    model.add_sheet("Third").unwrap();
+    // A cross-sheet reference so we can confirm it survives the reorder + save.
+    model.set_user_input(1, 1, 1, "42".to_string()).unwrap(); // Second!A1
+    model
+        .set_user_input(0, 1, 1, "=Second!A1".to_string())
+        .unwrap(); // Sheet1!A1
+
+    // Reorder: Sheet1 goes to the end.
+    model.move_sheet(0, 2).unwrap();
+    assert_eq!(
+        model.workbook.get_worksheet_names(),
+        vec!["Second", "Third", "Sheet1"]
+    );
+
+    let temp_file_name = "temp_file_test_move_sheet_order.xlsx";
+    save_to_xlsx(&model, temp_file_name).unwrap();
+
+    let model = load_from_xlsx(temp_file_name, "en", "UTC", "en").unwrap();
+    // The saved order is preserved on reload.
+    assert_eq!(
+        model.workbook.get_worksheet_names(),
+        vec!["Second", "Third", "Sheet1"]
+    );
+    // Sheet1 (now index 2) still resolves its reference to Second by name.
+    assert_eq!(model.get_formatted_cell_value(2, 1, 1).unwrap(), "42");
+    fs::remove_file(temp_file_name).unwrap();
+}
+
+#[test]
 fn test_named_styles() {
     let mut model = new_empty_model();
     model.set_user_input(0, 1, 1, "5.5".to_string()).unwrap();
@@ -251,4 +283,74 @@ fn test_existing_file() {
     );
 
     fs::remove_file(file_name).unwrap();
+}
+
+#[test]
+fn test_defined_name_lambda_exports_excel_prefixes() {
+    let mut model = new_empty_model();
+    model
+        .new_defined_name("cal_year", None, "Sheet1!$A$1")
+        .unwrap();
+    model
+        .new_defined_name(
+            "month_start",
+            None,
+            "LAMBDA(mo,LET(anchor,DATE(cal_year,mo,1),anchor+1))",
+        )
+        .unwrap();
+    model.set_user_input(0, 1, 1, "2024".to_string()).unwrap();
+    model
+        .set_user_input(0, 2, 1, "=month_start(3)".to_string())
+        .unwrap();
+    // reference value computed without defined names
+    model
+        .set_user_input(0, 3, 1, "=DATE(2024,3,1)+1".to_string())
+        .unwrap();
+    model.evaluate();
+    let expected_value = model.get_cell_value_by_index(0, 3, 1).unwrap();
+    assert_eq!(
+        model.get_cell_value_by_index(0, 2, 1).unwrap(),
+        expected_value
+    );
+
+    let temp_file_name = "temp_file_test_defined_name_lambda.xlsx";
+    save_to_xlsx(&model, temp_file_name).unwrap();
+
+    // The workbook part must store the formula in Excel's form: future
+    // functions prefixed with `_xlfn.` and lambda/let variables with `_xlpm.`.
+    let file = fs::File::open(temp_file_name).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut workbook_xml = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("xl/workbook.xml").unwrap(),
+        &mut workbook_xml,
+    )
+    .unwrap();
+    drop(archive);
+    assert!(
+        workbook_xml.contains(
+            "_xlfn.LAMBDA(_xlpm.mo,_xlfn.LET(_xlpm.anchor,DATE(cal_year,_xlpm.mo,1),_xlpm.anchor+1))"
+        ),
+        "workbook.xml does not contain the Excel form of the defined name: {workbook_xml}"
+    );
+    // The plain range name is stored untouched.
+    assert!(workbook_xml.contains("<definedName name=\"cal_year\">Sheet1!$A$1</definedName>"));
+
+    // And the file round-trips: the lambda still evaluates and the defined
+    // name displays without the prefixes.
+    let model = load_from_xlsx(temp_file_name, "en", "UTC", "en").unwrap();
+    assert_eq!(
+        model.get_cell_value_by_index(0, 2, 1).unwrap(),
+        expected_value
+    );
+    let defined_names = model.get_defined_name_list();
+    let month_start = defined_names
+        .iter()
+        .find(|(name, ..)| name == "month_start")
+        .unwrap();
+    assert_eq!(
+        month_start.2,
+        "LAMBDA(mo,LET(anchor,DATE(cal_year,mo,1),anchor+1))"
+    );
+    fs::remove_file(temp_file_name).unwrap();
 }

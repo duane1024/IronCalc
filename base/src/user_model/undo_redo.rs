@@ -8,6 +8,7 @@ use crate::{
     UserModel,
 };
 
+use crate::user_model::common::selected_sheet_after_move;
 use crate::user_model::history::{Diff, DiffList};
 
 impl<'a> UserModel<'a> {
@@ -330,6 +331,19 @@ impl<'a> UserModel<'a> {
                 } => {
                     self.model.rename_sheet_by_index(*index, old_value)?;
                 }
+                Diff::MoveSheet {
+                    sheet_index,
+                    new_index,
+                } => {
+                    // Undo a move by moving the sheet back to its original index.
+                    let selected = self.get_selected_sheet();
+                    self.model.move_sheet(*new_index, *sheet_index)?;
+                    self.set_selected_sheet(selected_sheet_after_move(
+                        selected,
+                        *new_index,
+                        *sheet_index,
+                    ))?;
+                }
                 Diff::SetSheetColor {
                     index,
                     old_value,
@@ -510,6 +524,12 @@ impl<'a> UserModel<'a> {
                     new_value: _,
                 } => {
                     self.model.set_timezone(old_value)?;
+                }
+                Diff::SetWorkbookName {
+                    old_value,
+                    new_value: _,
+                } => {
+                    self.model.workbook.name = old_value.clone();
                 }
                 Diff::CreateNamedStyle {
                     name,
@@ -844,6 +864,18 @@ impl<'a> UserModel<'a> {
                 } => {
                     self.model.rename_sheet_by_index(*index, new_value)?;
                 }
+                Diff::MoveSheet {
+                    sheet_index,
+                    new_index,
+                } => {
+                    let selected = self.get_selected_sheet();
+                    self.model.move_sheet(*sheet_index, *new_index)?;
+                    self.set_selected_sheet(selected_sheet_after_move(
+                        selected,
+                        *sheet_index,
+                        *new_index,
+                    ))?;
+                }
                 Diff::SetSheetColor {
                     index,
                     old_value: _,
@@ -963,6 +995,12 @@ impl<'a> UserModel<'a> {
                     new_value,
                 } => {
                     self.model.set_timezone(new_value)?;
+                }
+                Diff::SetWorkbookName {
+                    old_value: _,
+                    new_value,
+                } => {
+                    self.model.workbook.name = new_value.clone();
                 }
                 Diff::CreateNamedStyle {
                     name,

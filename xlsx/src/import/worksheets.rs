@@ -27,7 +27,7 @@ use super::{
     conditional_formatting::load_conditional_formatting,
     shared_strings::decode_xlsx_escapes,
     tables::load_table,
-    util::{get_attribute, get_color, get_number},
+    util::{get_attribute, get_bool_false, get_color, get_number},
 };
 
 pub(crate) struct Sheet {
@@ -149,8 +149,8 @@ fn load_columns(ws: Node) -> Result<Vec<Col>, XlsxError> {
             let max = max.parse::<i32>()?;
             let width = get_attribute(&col, "width")?;
             let width = width.parse::<f64>()?;
-            let custom_width = matches!(col.attribute("customWidth"), Some("1"));
-            let hidden = matches!(col.attribute("hidden"), Some("1"));
+            let custom_width = get_bool_false(col, "customWidth");
+            let hidden = get_bool_false(col, "hidden");
             let style = col
                 .attribute("style")
                 .map(|s| s.parse::<i32>().unwrap_or(0));
@@ -716,7 +716,13 @@ fn get_sheet_view(ws: Node) -> SheetView {
             range: [row1, column1, row2, column2],
         }
     } else {
-        SheetView::default()
+        SheetView {
+            frozen_rows,
+            frozen_columns,
+            is_selected,
+            show_grid_lines,
+            ..Default::default()
+        }
     }
 }
 
@@ -812,7 +818,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
                 default_row_height
             }
         };
-        let custom_height = matches!(row.attribute("customHeight"), Some("1"));
+        let custom_height = get_bool_false(row, "customHeight");
         // The height of the row is always the visible height of the row
         // If custom_height is false that means the height was calculated automatically:
         // for example because a cell has many lines or a larger font
@@ -821,8 +827,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
             Some(s) => s.parse::<i32>().unwrap_or(0),
             None => 0,
         };
-        let custom_format = matches!(row.attribute("customFormat"), Some("1"));
-        let hidden = matches!(row.attribute("hidden"), Some("1"));
+        let custom_format = get_bool_false(row, "customFormat");
+        let hidden = get_bool_false(row, "hidden");
 
         if let Some(row_index) = row_index {
             if custom_height || custom_format || row_style != 0 || has_height_attribute || hidden {
@@ -966,11 +972,14 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
                 let formula_node = fs[0];
                 let mut formula_type = formula_node.attribute("t").unwrap_or("normal");
                 let formula_ref = formula_node.attribute("ref");
-                if formula_node.attribute("t").is_none()
+                if formula_type == "normal"
                     && formula_node.attribute("ca") == Some("1")
                     && formula_node.text().is_none()
                     && !formula_node.children().any(|n| n.is_element())
                 {
+                    // A daughter cell of a shared formula (<f t="shared" ca="1" si="1"/>) is
+                    // also empty and may carry ca="1"; only an untyped <f ca="1"/> is a
+                    // volatile spill placeholder.
                     // This is a volatile formula that needs to be recalculated at each calculation.
                     // exit the if statement
                     // <f ca="1"/>

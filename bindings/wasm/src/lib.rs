@@ -1309,4 +1309,9 @@ impl Model {
             .set_iterative_calculation(iterate, iterate_count, iterate_delta)
             .map_err(to_js_error)
     }
+
+    #[wasm_bindgen(js_name = "moveSheet")]
+    pub fn move_sheet(&mut self, sheet: u32, new_index: u32) -> Result<(), JsError> {
+        self.model.move_sheet(sheet, new_index).map_err(to_js_error)
+    }
 }
