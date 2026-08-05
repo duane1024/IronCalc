@@ -1,0 +1,110 @@
+commit bb09d7aaf06d26ec957a85fa274f477af5356674
+Author: Duane Moore <duane.moore@ieee.org>
+Date:   Mon Jul 13 22:55:24 2026 -0400
+
+    Perf: scoped recompute for analyst-workbook live edits (#1)
+    
+    * Perf + correctness for analyst-workbook live edits
+    
+    - Model::recompute_target_cells: public cone-scoped recompute (demand-driven,
+      warm-start, honors iterative calc) for driver-edit -> display-range refresh
+    - Model::evaluate_formulas_only / evaluate_data_tables_only: phase split so
+      callers can own the data-table policy (Excel calcMode=autoNoTable)
+    - calc_results_converged: stable non-numeric target pairs now count as
+      converged (mixed target sets no longer force iterate_count passes)
+    - YEARFRAC: swap reversed dates before 30/360 day adjustments (Excel
+      semantics; |result| is not equivalent because the day-31 rules are
+      asymmetric) + regression test
+    - IRONCALC_TRACE=1 instrumentation: per-pass sweep/snapshot/drift, per-table
+      scenario/settle timing, recompute pass counts; per-sheet eval counters via
+      Model::eval_counting_start/take. No overhead when disabled.
+    
+    Measured on a 45-sheet analyst model (see baba
+    docs/prototypes/workbook-recompute-harness/PERF.md): full evaluate ~35s ->
+    38ms per driver edit, bit-exact vs the full iterative sweep.
+    
+    * Quote sheet names by allow-list, not block-list
+    
+    A sheet name may contain any character except \ / ? * [ ] : - the old
+    block-list missed '!', '&', '=', '%', and more, so re-stringified formulas
+    referencing sheets like '!CAP' or 'SUMM_P&L' (real names in an analyst
+    workbook) lost their quotes and could not be re-parsed (#ERROR!/#NAME?).
+    Quoting is always legal, so only names matching the unquoted-identifier
+    grammar (letter/_ then letters/digits/_/.) may skip quotes.
+    
+    Adds regression tests incl. an end-to-end evaluate through '!CAP' and
+    'SUMM_P&L' references.
+    
+    * Add BRANCH_NOTES.md: change inventory + main-vs-data-tables-impl dependency map
+    
+    * Trim BRANCH_NOTES.md to upstream-candidate fixes only
+    
+    The data-tables-impl-specific inventory is now covered by PR #1
+    (perf-scoped-recompute -> data-tables-impl); keep only the two
+    fixes (YEARFRAC swap, sheet-name quoting allow-list) that are
+    independent of data-tables-impl and worth an immediate upstream PR.
+
+diff --git a/base/src/functions/date_and_time.rs b/base/src/functions/date_and_time.rs
+index 5633dcf9..48f9338f 100644
+--- a/base/src/functions/date_and_time.rs
++++ b/base/src/functions/date_and_time.rs
+@@ -1727,14 +1727,24 @@ impl<'a> Model<'a> {
+         if !(2..=3).contains(&args.len()) {
+             return CalcResult::new_args_number_error(cell);
+         }
+-        let start_serial = match self.get_number(&args[0], cell) {
++        let mut start_serial = match self.get_number(&args[0], cell) {
+             Ok(c) => c.floor() as i64,
+             Err(s) => return s,
+         };
+-        let end_serial = match self.get_number(&args[1], cell) {
++        let mut end_serial = match self.get_number(&args[1], cell) {
+             Ok(c) => c.floor() as i64,
+             Err(s) => return s,
+         };
++        // Excel swaps the dates when start > end BEFORE the day-count
++        // adjustments. Taking |result| at the end is NOT equivalent: the
++        // 30/360 day-of-month rules are asymmetric (only the start day
++        // collapses 31 -> 30 unconditionally), so e.g.
++        // YEARFRAC(DATE(2026,7,10), DATE(2025,12,31)) must see Dec 31 as the
++        // START (190/360), not the end (189/360). The swap also keeps
++        // basis 1's year-range arithmetic ordered.
++        if start_serial > end_serial {
++            std::mem::swap(&mut start_serial, &mut end_serial);
++        }
+         let basis = if args.len() == 3 {
+             match self.get_number(&args[2], cell) {
+                 Ok(f) => f as i32,
+diff --git a/base/src/test/test_yearfrac_basis.rs b/base/src/test/test_yearfrac_basis.rs
+index 8ed78b22..a6133a3b 100644
+--- a/base/src/test/test_yearfrac_basis.rs
++++ b/base/src/test/test_yearfrac_basis.rs
+@@ -58,3 +58,28 @@ fn test_yearfrac_basis_3_actual_365() {
+     // Same date
+     assert_eq!(model._get_text("B3"), *"0");
+ }
++
++#[test]
++fn test_yearfrac_basis_0_swaps_reversed_dates() {
++    let mut model = new_empty_model();
++
++    // Basis 0 (US 30/360) day-of-month rules are asymmetric: Dec 31 as the
++    // START collapses 31 -> 30 (190 days to Jul 10 2026), but as the END it
++    // stays 31 (189 days). Excel resolves reversed arguments by swapping the
++    // dates BEFORE the adjustments, so both orders must give 190/360.
++    model._set("A1", "=YEARFRAC(DATE(2025,12,31),DATE(2026,7,10))");
++    model._set("A2", "=YEARFRAC(DATE(2026,7,10),DATE(2025,12,31))");
++
++    model.evaluate();
++
++    for cell in ["Sheet1!A1", "Sheet1!A2"] {
++        if let Ok(CellValue::Number(v)) = model.get_cell_value_by_ref(cell) {
++            assert!(
++                (v - 190.0 / 360.0).abs() < 1e-10,
++                "{cell} = {v}, want 190/360"
++            );
++        } else {
++            panic!("Expected numeric value in {cell}");
++        }
++    }
++}
