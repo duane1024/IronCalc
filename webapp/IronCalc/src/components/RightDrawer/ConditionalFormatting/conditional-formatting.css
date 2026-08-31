@@ -10,6 +10,7 @@
   align-items: center;
   justify-content: flex-end;
   padding: 0 8px;
+  color: var(--palette-common-black);
   border-bottom: 1px solid var(--palette-grey-300);
 }
 
@@ -86,6 +87,7 @@
   border: none;
   border-radius: 0;
   width: 100%;
+  background-color: var(--palette-common-white);
 }
 
 .ic-cf-filter {
@@ -240,12 +242,13 @@
   justify-content: space-between;
   padding: 0 8px;
   gap: 8px;
+  color: var(--palette-common-black);
   border-bottom: 1px solid var(--palette-grey-300);
 }
 
 .ic-cf-edit-header-title {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--typography-font-size);
   font-weight: 500;
 }
 

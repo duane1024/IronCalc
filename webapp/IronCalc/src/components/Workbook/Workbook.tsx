@@ -2,6 +2,7 @@ import type {
   BorderOptions,
   ClipboardCell,
   IronCalcTheme,
+  Link,
   Model,
   WorksheetProperties,
 } from "@ironcalc/wasm";
@@ -19,24 +20,21 @@ import RightDrawer, {
   type DrawerType,
 } from "../RightDrawer/RightDrawer";
 import SheetTabBar from "../SheetTabBar";
-import Toolbar from "../Toolbar/Toolbar";
+import Toolbar, { type MergeCellsOperation } from "../Toolbar/Toolbar";
 import {
   getCellAddress,
+  getEditorSize,
   getFullRangeToString,
   type NavigationKey,
 } from "../util";
 import Worksheet from "../Worksheet/Worksheet";
-import {
-  COLUMN_WIDTH_SCALE,
-  LAST_COLUMN,
-  LAST_ROW,
-  ROW_HEIGH_SCALE,
-} from "../WorksheetCanvas/constants";
+import { LAST_COLUMN, LAST_ROW } from "../WorksheetCanvas/constants";
 import type WorksheetCanvas from "../WorksheetCanvas/worksheetCanvas";
 import { devicePixelRatio } from "../WorksheetCanvas/worksheetCanvas";
 import type { WorkbookState } from "../workbookState";
 import useKeyboardNavigation from "./useKeyboardNavigation";
 import "./workbook.css";
+import { LinkDialog } from "../LinkDialog/LinkDialog";
 import { Alert } from "../Modal";
 
 function colorToParam(color: Color): string {
@@ -67,12 +65,19 @@ const Workbook = (props: {
   // This is needed because `model` or `workbookState` can change without React being aware of it
   const setRedrawId = useState(0)[1];
 
-  const [alertDialogMessage, setAlertDialogMessage] = useState<string | null>(
-    null,
-  );
+  const [alertDialog, setAlertDialog] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
   const [isDrawerOpen, setDrawerOpen] = useState(false);
   const [drawerWidth, setDrawerWidth] = useState(DEFAULT_DRAWER_WIDTH);
   const [drawerType, setDrawerType] = useState<DrawerType>("namedRanges");
+  // The cell the link dialog operates on (null when the dialog is closed)
+  const [linkDialogCell, setLinkDialogCell] = useState<{
+    sheet: number;
+    row: number;
+    column: number;
+  } | null>(null);
 
   const openDrawer = useCallback((type: DrawerType) => {
     setDrawerType(type);
@@ -84,7 +89,7 @@ const Workbook = (props: {
     ({ name, color, sheet_id, state }: WorksheetProperties) => {
       return {
         name,
-        color: model.resolveColor(color) || "#FFF",
+        color: model.resolveColor(color) || "var(--palette-common-white)",
         sheetId: sheet_id,
         state,
       };
@@ -171,6 +176,92 @@ const Workbook = (props: {
     updateRangeStyle("alignment.wrap_text", `${value}`);
   };
 
+  // The selected area, normalized (row/column is the top-left corner)
+  const getSelectedArea = () => {
+    const {
+      sheet,
+      range: [rowStart, columnStart, rowEnd, columnEnd],
+    } = model.getSelectedView();
+    return {
+      sheet,
+      row: Math.min(rowStart, rowEnd),
+      column: Math.min(columnStart, columnEnd),
+      width: Math.abs(columnEnd - columnStart) + 1,
+      height: Math.abs(rowEnd - rowStart) + 1,
+    };
+  };
+
+  const selectionIntersectsMergedCells = () => {
+    const area = getSelectedArea();
+    return model
+      .getMergedCells(area.sheet)
+      .some(
+        (m) =>
+          m.row <= area.row + area.height - 1 &&
+          m.row + m.height - 1 >= area.row &&
+          m.column <= area.column + area.width - 1 &&
+          m.column + m.width - 1 >= area.column,
+      );
+  };
+
+  // The menu merges a selection of more than one cell (as a single merged
+  // cell, centered, across or down) and unmerges a selection that intersects
+  // merged cells.
+  const onMergeCells = (operation: MergeCellsOperation) => {
+    const area = getSelectedArea();
+    try {
+      switch (operation) {
+        case "merge":
+          model.mergeCells(area);
+          break;
+        case "merge_center":
+          model.mergeCellsCenter(area);
+          break;
+        case "merge_across":
+          model.mergeCellsAcross(area);
+          break;
+        case "merge_down":
+          model.mergeCellsDown(area);
+          break;
+        case "unmerge":
+          model.unmergeCells(area);
+          break;
+      }
+    } catch (e) {
+      if (`${e}`.includes("more than one cell has content")) {
+        setAlertDialog({
+          title: t("error_dialog.error_merging_cells"),
+          message: t("error_dialog.error_merging_cells_content"),
+        });
+      }
+      // other failures (e.g. merging over an array formula) stay silent
+    }
+    setRedrawId((id) => id + 1);
+  };
+
+  // Full-row and full-column selections can be neither merged nor unmerged.
+  const getMergeCellsState = () => {
+    const area = getSelectedArea();
+    if (area.width >= LAST_COLUMN || area.height >= LAST_ROW) {
+      return {
+        canMerge: false,
+        canMergeAcross: false,
+        canMergeDown: false,
+        canUnmerge: false,
+      };
+    }
+    const canUnmerge = selectionIntersectsMergedCells();
+    const canMerge = !canUnmerge && area.width * area.height > 1;
+    return {
+      canMerge,
+      // merging across (down) merges each row (column) separately, so it
+      // needs more than one column (row)
+      canMergeAcross: canMerge && area.width > 1,
+      canMergeDown: canMerge && area.height > 1,
+      canUnmerge,
+    };
+  };
+
   const onTextColorPicked = (color: Color) => {
     updateRangeStyle("font.color", colorToParam(color));
   };
@@ -228,7 +319,10 @@ const Workbook = (props: {
           }),
         );
       } catch {
-        setAlertDialogMessage(t("error_dialog.error_clipboard_paste"));
+        setAlertDialog({
+          title: t("error_dialog.error_deleting_cells"),
+          message: t("error_dialog.error_clipboard_paste"),
+        });
       }
     }
   }, [focusWorkbook, t]);
@@ -299,7 +393,10 @@ const Workbook = (props: {
           column + width,
         );
       } catch (e) {
-        setAlertDialogMessage(`${e}`);
+        setAlertDialog({
+          title: t("error_dialog.error_deleting_cells"),
+          message: `${e}`,
+        });
       }
       setRedrawId((id) => id + 1);
     },
@@ -311,9 +408,12 @@ const Workbook = (props: {
     },
     onEditKeyPressStart: (initText: string): void => {
       const { sheet, row, column } = model.getSelectedView();
-      const editorWidth =
-        model.getColumnWidth(sheet, column) * COLUMN_WIDTH_SCALE;
-      const editorHeight = model.getRowHeight(sheet, row) * ROW_HEIGH_SCALE;
+      const { width: editorWidth, height: editorHeight } = getEditorSize(
+        model,
+        sheet,
+        row,
+        column,
+      );
       workbookState.setEditingCell({
         sheet,
         row,
@@ -334,9 +434,12 @@ const Workbook = (props: {
       // User presses F2, we start editing at the edn of the text
       const { sheet, row, column } = model.getSelectedView();
       const text = model.getCellContent(sheet, row, column);
-      const editorWidth =
-        model.getColumnWidth(sheet, column) * COLUMN_WIDTH_SCALE;
-      const editorHeight = model.getRowHeight(sheet, row) * ROW_HEIGH_SCALE;
+      const { width: editorWidth, height: editorHeight } = getEditorSize(
+        model,
+        sheet,
+        row,
+        column,
+      );
       workbookState.setEditingCell({
         sheet,
         row,
@@ -513,6 +616,38 @@ const Workbook = (props: {
   const style = getCellStyle();
   const currentTheme = model.getTheme();
 
+  const openLinkDialog = (sheet: number, row: number, column: number): void => {
+    setLinkDialogCell({ sheet, row, column });
+  };
+
+  const onSaveLink = (link: Link, label: string): void => {
+    if (!linkDialogCell) {
+      return;
+    }
+    const { sheet, row, column } = linkDialogCell;
+    // The cell content is the displayed text of the link. If the label is
+    // empty, fall back to the link target/location (for emails, just the
+    // address without the mailto parameters).
+    const text =
+      label.trim() ||
+      (link.type === "External"
+        ? link.target.replace(/^mailto:/, "").split("?")[0]
+        : link.location);
+    // Sets the link, the cell content and (for new links) the link style
+    // in a single undo step.
+    model.setCellLink(sheet, row, column, link, text);
+    setRedrawId((id) => id + 1);
+  };
+
+  const onDeleteLink = (): void => {
+    if (!linkDialogCell) {
+      return;
+    }
+    const { sheet, row, column } = linkDialogCell;
+    model.deleteCellLink(sheet, row, column);
+    setRedrawId((id) => id + 1);
+  };
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: This div needs to be focusable to handle keyboard events for the workbook
     <div
@@ -583,7 +718,10 @@ const Workbook = (props: {
             );
             setRedrawId((id) => id + 1);
           } catch (e) {
-            setAlertDialogMessage(`${e}`);
+            setAlertDialog({
+              title: t("error_dialog.error_deleting_cells"),
+              message: `${e}`,
+            });
           }
         } else if (mimeType === "text/plain") {
           const {
@@ -603,7 +741,10 @@ const Workbook = (props: {
             model.pasteCsvText(range, value);
             setRedrawId((id) => id + 1);
           } catch (e) {
-            setAlertDialogMessage(`${e}`);
+            setAlertDialog({
+              title: t("error_dialog.error_deleting_cells"),
+              message: `${e}`,
+            });
           }
         } else {
           // NOT IMPLEMENTED
@@ -823,6 +964,8 @@ const Workbook = (props: {
             style.alignment?.vertical ? style.alignment.vertical : "bottom"
           }
           wrapText={style.alignment?.wrap_text || false}
+          mergeCellsState={getMergeCellsState()}
+          onMergeCells={onMergeCells}
           canEdit={true}
           numFmt={style.num_fmt}
           showGridLines={model.getShowGridLines(model.getSelectedSheet())}
@@ -840,6 +983,10 @@ const Workbook = (props: {
           }
           onOpenNamedStyles={() => openDrawer("namedStyles")}
           isNamedStylesOpen={isDrawerOpen && drawerType === "namedStyles"}
+          onOpenLinkDialog={() => {
+            const { sheet, row, column } = model.getSelectedView();
+            openLinkDialog(sheet, row, column);
+          }}
           themes={themes}
           currentTheme={currentTheme}
           onThemePicked={handleThemePicked}
@@ -886,6 +1033,21 @@ const Workbook = (props: {
             document.execCommand("copy");
           }}
           onPaste={handlePaste}
+          onEditLink={
+            canEdit
+              ? (row: number, column: number): void => {
+                  openLinkDialog(model.getSelectedSheet(), row, column);
+                }
+              : undefined
+          }
+          onDeleteLink={
+            canEdit
+              ? (row: number, column: number): void => {
+                  model.deleteCellLink(model.getSelectedSheet(), row, column);
+                  setRedrawId((id) => id + 1);
+                }
+              : undefined
+          }
         />
 
         <SheetTabBar
@@ -1029,11 +1191,35 @@ const Workbook = (props: {
         }}
       />
       <Alert
-        open={alertDialogMessage !== null}
-        onClose={() => setAlertDialogMessage(null)}
-        title={t("error_dialog.error_deleting_cells")}
-        message={alertDialogMessage}
+        open={alertDialog !== null}
+        onClose={() => setAlertDialog(null)}
+        title={alertDialog?.title ?? ""}
+        message={alertDialog?.message ?? ""}
       />
+      {linkDialogCell && (
+        <LinkDialog
+          open
+          onClose={() => setLinkDialogCell(null)}
+          sheetNames={worksheets.map((sheet) => sheet.name)}
+          selectedSheetName={
+            worksheets[linkDialogCell.sheet]?.name ?? worksheets[0]?.name ?? ""
+          }
+          initialLink={
+            model.getCellLink(
+              linkDialogCell.sheet,
+              linkDialogCell.row,
+              linkDialogCell.column,
+            ) ?? null
+          }
+          initialLabel={model.getFormattedCellValue(
+            linkDialogCell.sheet,
+            linkDialogCell.row,
+            linkDialogCell.column,
+          )}
+          onSave={onSaveLink}
+          onDelete={onDeleteLink}
+        />
+      )}
     </div>
   );
 };

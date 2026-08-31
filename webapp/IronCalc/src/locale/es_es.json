@@ -199,11 +199,38 @@
     "error_editing_formula": "Error al editar la fórmula",
     "error_inserting_columns": "Error al insertar las columnas",
     "error_inserting_rows": "Error al insertar las filas",
+    "error_merging_cells": "No se pueden combinar las celdas",
+    "error_merging_cells_content": "Solo una celda de la selección puede tener contenido.",
     "error_moving_columns": "Error al mover las columnas",
     "error_moving_rows": "Error al mover las filas"
   },
   "formula_bar": {
     "manage_named_ranges": "Gestionar rangos con nombre"
+  },
+  "link_dialog": {
+    "body_placeholder": "Mensaje (opcional)",
+    "cell_reference_placeholder": "Referencia de celda",
+    "close": "Cerrar",
+    "delete": "Eliminar",
+    "document_tab": "Enlace al documento",
+    "email_placeholder": "Dirección de correo",
+    "email_tab": "Correo",
+    "external_tab": "Enlace externo",
+    "invalid_email": "Introduce una dirección de correo válida",
+    "invalid_reference": "Introduce una referencia de celda válida",
+    "invalid_url": "Introduce una URL válida",
+    "label_placeholder": "Etiqueta",
+    "save": "Guardar",
+    "subject_placeholder": "Asunto (opcional)",
+    "title_add": "Añadir enlace",
+    "title_edit": "Editar enlace",
+    "tooltip_placeholder": "Descripción emergente (opcional)",
+    "url_placeholder": "URL"
+  },
+  "link_tooltip": {
+    "break": "Quitar enlace",
+    "copy": "Copiar enlace",
+    "edit": "Editar enlace"
   },
   "name_manager_dialog": {
     "add_new_range": "Añadir un nuevo rango",
@@ -352,6 +379,7 @@
     "text_color_label": "Texto"
   },
   "toolbar": {
+    "add_link": "Insertar enlace",
     "align_center": "Alinear al centro",
     "align_left": "Alinear a la izquierda",
     "align_right": "Alinear a la derecha",
@@ -400,6 +428,14 @@
     "format_number": "Formato de número",
     "increase_font_size": "Aumentar tamaño de fuente",
     "italic": "Cursiva",
+    "merge_cells": "Combinar celdas",
+    "merge_menu": {
+      "merge": "Combinar celdas",
+      "merge_across": "Combinar horizontalmente",
+      "merge_center": "Combinar y centrar",
+      "merge_down": "Combinar verticalmente",
+      "unmerge": "Separar celdas"
+    },
     "named_styles": "Estilos de celda",
     "percentage": "Formato porcentaje",
     "redo": "Rehacer",

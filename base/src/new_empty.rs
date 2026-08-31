@@ -51,6 +51,8 @@ impl<'a> Model<'a> {
                     row: 1,
                     column: 1,
                     range: [1, 1, 1, 1],
+                    focus_row: 1,
+                    focus_column: 1,
                     top_row: 1,
                     left_column: 1,
                 },
@@ -61,7 +63,7 @@ impl<'a> Model<'a> {
             rows: vec![],
             comments: vec![],
             dimension: "A1".to_string(),
-            merge_cells: vec![],
+            merged_cells: vec![],
             name: name.to_string(),
             shared_formulas: vec![],
             sheet_data: Default::default(),
@@ -74,6 +76,7 @@ impl<'a> Model<'a> {
             views,
             conditional_formatting: vec![],
             data_tables: vec![],
+            links: HashMap::new(),
         }
     }
 
@@ -698,6 +701,7 @@ impl<'a> Model<'a> {
             support: HashMap::new(),
             cf_cache: HashMap::new(),
             data_table_overrides: None,
+            links: HashMap::new(),
         };
         model.parse_formulas();
         model.evaluate_conditional_formatting();

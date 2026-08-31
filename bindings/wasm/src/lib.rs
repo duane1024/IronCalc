@@ -12,7 +12,7 @@ use ironcalc_base::{
         types::Area,
         utils::{column_to_number, number_to_column, quote_name as quote_name_ic},
     },
-    types::{CellType, Color, Style, StyleIncludes},
+    types::{CellType, Color, Link, Style, StyleIncludes},
     worksheet::NavigationDirection,
     BorderArea, ClipboardData, UserModel as BaseModel,
 };
@@ -136,10 +136,32 @@ impl Model {
         Ok(Model { model })
     }
 
+    #[wasm_bindgen(js_name = "fromBytes")]
     pub fn from_bytes(bytes: &[u8], language_id: &str) -> Result<Model, JsError> {
         let language_id = leak_str(language_id);
         let model = BaseModel::from_bytes(bytes, language_id).map_err(to_js_error)?;
         Ok(Model { model })
+    }
+
+    /// Loads a workbook from the bytes of an xlsx file.
+    /// Only available in `@ironcalc/wasm-xlsx`.
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "fromXlsx")]
+    pub fn from_xlsx(
+        bytes: &[u8],
+        name: &str,
+        locale: &str,
+        timezone: &str,
+        language_id: &str,
+    ) -> Result<Model, JsError> {
+        let workbook = ironcalc::import::load_from_xlsx_bytes(bytes, name, locale, timezone)
+            .map_err(|e| to_js_error(e.to_string()))?;
+        let language_id = leak_str(language_id);
+        let calc_model =
+            ironcalc_base::Model::from_workbook(workbook, language_id).map_err(to_js_error)?;
+        Ok(Model {
+            model: BaseModel::from_model(calc_model),
+        })
     }
 
     pub fn undo(&mut self) -> Result<(), JsError> {
@@ -575,6 +597,62 @@ impl Model {
             .map_err(to_js_error)
     }
 
+    #[wasm_bindgen(js_name = "mergeCells")]
+    pub fn merge_cells(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] range: JsValue,
+    ) -> Result<(), JsError> {
+        let range: Area =
+            serde_wasm_bindgen::from_value(range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.merge_cells(&range).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "mergeCellsCenter")]
+    pub fn merge_cells_center(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] range: JsValue,
+    ) -> Result<(), JsError> {
+        let range: Area =
+            serde_wasm_bindgen::from_value(range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.merge_cells_center(&range).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "mergeCellsAcross")]
+    pub fn merge_cells_across(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] range: JsValue,
+    ) -> Result<(), JsError> {
+        let range: Area =
+            serde_wasm_bindgen::from_value(range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.merge_cells_across(&range).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "mergeCellsDown")]
+    pub fn merge_cells_down(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] range: JsValue,
+    ) -> Result<(), JsError> {
+        let range: Area =
+            serde_wasm_bindgen::from_value(range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.merge_cells_down(&range).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "unmergeCells")]
+    pub fn unmerge_cells(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "Area")] range: JsValue,
+    ) -> Result<(), JsError> {
+        let range: Area =
+            serde_wasm_bindgen::from_value(range).map_err(|e| to_js_error(e.to_string()))?;
+        self.model.unmerge_cells(&range).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = "getMergedCells", unchecked_return_type = "MergedCell[]")]
+    pub fn get_merged_cells(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let merged_cells = self.model.get_merged_cells(sheet).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&merged_cells).map_err(|e| to_js_error(e.to_string()))
+    }
+
     #[wasm_bindgen(js_name = "getCellStyle", unchecked_return_type = "ExtendedCellStyle")]
     pub fn get_cell_style(
         &mut self,
@@ -698,6 +776,56 @@ impl Model {
     #[wasm_bindgen(js_name = "getShowGridLines")]
     pub fn get_show_grid_lines(&mut self, sheet: u32) -> Result<bool, JsError> {
         self.model.get_show_grid_lines(sheet).map_err(to_js_error)
+    }
+
+    /// Returns the link attached to the cell or undefined if there isn't one.
+    #[wasm_bindgen(js_name = "getCellLink", unchecked_return_type = "Link | undefined")]
+    pub fn get_cell_link(&self, sheet: u32, row: i32, column: i32) -> Result<JsValue, JsError> {
+        let link = self
+            .model
+            .get_cell_link(sheet, row, column)
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&link).map_err(|e| to_js_error(e.to_string()))
+    }
+
+    /// Attaches a link to a cell, replacing the existing one if there was one.
+    /// If `label` is given it becomes the content of the cell (the displayed text).
+    /// A new link also applies the link style (underline + theme hyperlink color)
+    /// to the cell. The whole operation is a single undo step.
+    #[wasm_bindgen(js_name = "setCellLink")]
+    pub fn set_cell_link(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        #[wasm_bindgen(unchecked_param_type = "Link")] link: JsValue,
+        label: Option<String>,
+    ) -> Result<(), JsError> {
+        let link: Link =
+            serde_wasm_bindgen::from_value(link).map_err(|e| to_js_error(e.to_string()))?;
+        self.model
+            .set_cell_link(sheet, row, column, link, label.as_deref())
+            .map_err(to_js_error)
+    }
+
+    /// Removes the link attached to the cell. It is not an error if the cell has no link.
+    #[wasm_bindgen(js_name = "deleteCellLink")]
+    pub fn delete_cell_link(&mut self, sheet: u32, row: i32, column: i32) -> Result<(), JsError> {
+        self.model
+            .delete_cell_link(sheet, row, column)
+            .map_err(to_js_error)
+    }
+
+    /// Returns all the links in the worksheet sorted by (row, column).
+    #[wasm_bindgen(js_name = "getLinks", unchecked_return_type = "CellLink[]")]
+    pub fn get_links(&self, sheet: u32) -> Result<JsValue, JsError> {
+        let links = self.model.get_links_list(sheet).map_err(to_js_error)?;
+        // The `CellLink` entries have the link fields flattened, which serde
+        // serializes through its map machinery; the json_compatible serializer
+        // produces plain JS objects for maps instead of `Map` instances.
+        links
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|e| to_js_error(e.to_string()))
     }
 
     /// Sets the workbook theme.
@@ -858,6 +986,17 @@ impl Model {
     #[wasm_bindgen(js_name = "toBytes")]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.model.to_bytes()
+    }
+
+    /// Serializes the workbook to xlsx bytes.
+    /// Only available in `@ironcalc/wasm-xlsx`.
+    #[cfg(feature = "xlsx")]
+    #[wasm_bindgen(js_name = "toXlsx")]
+    pub fn to_xlsx(&self) -> Result<Vec<u8>, JsError> {
+        let writer = std::io::Cursor::new(Vec::new());
+        let writer = ironcalc::export::save_xlsx_to_writer(self.model.get_model(), writer)
+            .map_err(|e| to_js_error(e.to_string()))?;
+        Ok(writer.into_inner())
     }
 
     #[wasm_bindgen(js_name = "getName")]

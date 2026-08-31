@@ -15,7 +15,7 @@ use crate::{
     model::{FmtSettings, Model},
     types::{
         Alignment, ArrayKind, BorderItem, Cell, CellType, Col, Color, HorizontalAlignment,
-        SheetProperties, SheetState, Style, Theme, VerticalAlignment,
+        MergedCell, SheetProperties, SheetState, Style, Theme, VerticalAlignment,
     },
 };
 
@@ -449,11 +449,6 @@ impl<'a> UserModel<'a> {
         } else {
             old_value
         };
-        self.model
-            .set_user_input(sheet, row, column, value.to_string())?;
-
-        self.evaluate_if_not_paused();
-
         let mut diff_list = vec![Diff::SetCellValue {
             sheet,
             row,
@@ -461,6 +456,10 @@ impl<'a> UserModel<'a> {
             new_value: value.to_string(),
             old_value: Box::new(old_value),
         }];
+        self.set_user_input_with_link_diffs(sheet, row, column, value.to_string(), &mut diff_list)?;
+
+        self.evaluate_if_not_paused();
+
         let style = self.model.get_style_for_cell(sheet, row, column)?;
 
         let line_count = value.split('\n').count() as f64;
@@ -480,6 +479,47 @@ impl<'a> UserModel<'a> {
         }
 
         self.push_diff_list(diff_list);
+        Ok(())
+    }
+
+    /// Calls [`Model::set_user_input`] and appends to `diff_list` the diffs for the
+    /// side effects it has on the cell link: URL-like values are auto-linked (which
+    /// also applies the link style when the cell was not linked before) and an empty
+    /// input removes the link. The `SetCellValue` diff for the input itself is not
+    /// added here.
+    pub(super) fn set_user_input_with_link_diffs(
+        &mut self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        value: String,
+        diff_list: &mut Vec<Diff>,
+    ) -> Result<(), String> {
+        let old_link = self.model.get_cell_link(sheet, row, column)?;
+        let old_style = self.model.get_cell_style_or_none(sheet, row, column)?;
+        self.model.set_user_input(sheet, row, column, value)?;
+        let new_link = self.model.get_cell_link(sheet, row, column)?;
+        if new_link == old_link {
+            return Ok(());
+        }
+        if old_link.is_none() {
+            // a newly auto-created link also applies the link style to the cell
+            let new_style = self.model.get_style_for_cell(sheet, row, column)?;
+            diff_list.push(Diff::SetCellStyle {
+                sheet,
+                row,
+                column,
+                old_value: Box::new(old_style),
+                new_value: Box::new(new_style),
+            });
+        }
+        diff_list.push(Diff::SetCellLink {
+            sheet,
+            row,
+            column,
+            old_value: Box::new(old_link),
+            new_value: Box::new(new_link),
+        });
         Ok(())
     }
 
@@ -740,8 +780,10 @@ impl<'a> UserModel<'a> {
             old_value.push(data_row);
             old_style.push(style_row);
         }
+        // Clearing the cells also removes their links: capture them for undo
+        let link_diffs = self.range_link_diffs(range)?;
         self.model.range_clear_all(range)?;
-        let diff_list = vec![Diff::RangeClearAll {
+        let mut diff_list = vec![Diff::RangeClearAll {
             sheet,
             row: range.row,
             column: range.column,
@@ -750,6 +792,7 @@ impl<'a> UserModel<'a> {
             old_value,
             old_style,
         }];
+        diff_list.extend(link_diffs);
 
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
@@ -777,8 +820,10 @@ impl<'a> UserModel<'a> {
             }
             old_value.push(data_row);
         }
+        // Clearing the cells also removes their links: capture them for undo
+        let link_diffs = self.range_link_diffs(range)?;
         self.model.range_clear_contents(range)?;
-        let diff_list = vec![Diff::RangeClearContents {
+        let mut diff_list = vec![Diff::RangeClearContents {
             sheet,
             row: range.row,
             column: range.column,
@@ -786,9 +831,32 @@ impl<'a> UserModel<'a> {
             height: range.height,
             old_value,
         }];
+        diff_list.extend(link_diffs);
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
+    }
+
+    /// Returns the diffs that remove the links of the cells in `range`, so that
+    /// undoing a clear operation restores them.
+    pub(super) fn range_link_diffs(&self, range: &Area) -> Result<Vec<Diff>, String> {
+        let mut diffs = Vec::new();
+        for (&(row, column), link) in &self.model.workbook.worksheet(range.sheet)?.links {
+            if row >= range.row
+                && row < range.row + range.height
+                && column >= range.column
+                && column < range.column + range.width
+            {
+                diffs.push(Diff::SetCellLink {
+                    sheet: range.sheet,
+                    row,
+                    column,
+                    old_value: Box::new(Some(link.clone())),
+                    new_value: Box::new(None),
+                });
+            }
+        }
+        Ok(diffs)
     }
 
     fn clear_column_formatting(
@@ -1004,13 +1072,15 @@ impl<'a> UserModel<'a> {
     ///
     /// See also [`Model::insert_rows`].
     pub fn insert_rows(&mut self, sheet: u32, row: i32, row_count: i32) -> Result<(), String> {
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_rows(sheet, row, row_count)?;
 
-        let diff_list = vec![Diff::InsertRows {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::InsertRows {
             sheet,
             row,
             count: row_count,
-        }];
+        });
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1034,13 +1104,15 @@ impl<'a> UserModel<'a> {
         column: i32,
         column_count: i32,
     ) -> Result<(), String> {
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.insert_columns(sheet, column, column_count)?;
 
-        let diff_list = vec![Diff::InsertColumns {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::InsertColumns {
             sheet,
             column,
             count: column_count,
-        }];
+        });
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1087,14 +1159,28 @@ impl<'a> UserModel<'a> {
             });
         }
 
+        // The links of the deleted rows cannot be restored by re-inserting the
+        // rows: capture them for undo. Links below the deleted rows just shift
+        // with their cells, [`Model::delete_rows`] takes care of them.
+        let link_diffs = self.range_link_diffs(&Area {
+            sheet,
+            row,
+            column: 1,
+            width: LAST_COLUMN,
+            height: row_count,
+        })?;
+
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.delete_rows(sheet, row, row_count)?;
 
-        let diff_list = vec![Diff::DeleteRows {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(link_diffs);
+        diff_list.push(Diff::DeleteRows {
             sheet,
             row,
             count: row_count,
             old_data,
-        }];
+        });
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1152,14 +1238,29 @@ impl<'a> UserModel<'a> {
             });
         }
 
+        // The links of the deleted columns cannot be restored by re-inserting
+        // the columns: capture them for undo. Links to the right of the deleted
+        // columns just shift with their cells, [`Model::delete_columns`] takes
+        // care of them.
+        let link_diffs = self.range_link_diffs(&Area {
+            sheet,
+            row: 1,
+            column,
+            width: column_count,
+            height: LAST_ROW,
+        })?;
+
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model.delete_columns(sheet, column, column_count)?;
 
-        let diff_list = vec![Diff::DeleteColumns {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.extend(link_diffs);
+        diff_list.push(Diff::DeleteColumns {
             sheet,
             column,
             count: column_count,
             old_data,
-        }];
+        });
         self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
@@ -1193,15 +1294,18 @@ impl<'a> UserModel<'a> {
             }
         }
 
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model
             .move_columns_action(sheet, column, column_count, new_delta)?;
 
-        self.push_diff_list(vec![Diff::MoveColumns {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::MoveColumns {
             sheet,
             column,
             column_count,
             delta: new_delta,
-        }]);
+        });
+        self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
     }
@@ -1233,15 +1337,18 @@ impl<'a> UserModel<'a> {
             }
         }
 
+        let old_merged_cells = self.model.get_merged_cells(sheet)?.to_vec();
         self.model
             .move_rows_action(sheet, row, row_count, new_delta)?;
 
-        self.push_diff_list(vec![Diff::MoveRows {
+        let mut diff_list = self.merged_cells_snapshot_diffs(sheet, old_merged_cells)?;
+        diff_list.push(Diff::MoveRows {
             sheet,
             row,
             row_count,
             delta: new_delta,
-        }]);
+        });
+        self.push_diff_list(diff_list);
         self.evaluate_if_not_paused();
         Ok(())
     }
@@ -1536,6 +1643,8 @@ impl<'a> UserModel<'a> {
         if let Ok(worksheet) = self.model.workbook.worksheet_mut(sheet) {
             if let Some(view) = worksheet.views.get_mut(&self.model.view_id) {
                 view.range = [row_start, column_start, last_row, last_column];
+                view.focus_row = last_row;
+                view.focus_column = last_column;
             }
         }
         Ok(())
@@ -2197,6 +2306,32 @@ impl<'a> UserModel<'a> {
     }
 
     // **** Private methods ****** //
+
+    /// Returns a snapshot diff of the merged cells of the sheet when the
+    /// current list differs from `old_merged_cells`, and nothing otherwise.
+    ///
+    /// Structural actions (insert, delete or move of rows and columns) displace
+    /// merged ranges on their own when they are (re)played, but their undo
+    /// cannot always reconstruct the original ranges (a fully deleted merge is
+    /// gone, deleting rows above a merge and re-inserting them displaces it).
+    /// The snapshot has `old_value == new_value` — a no-op when applied — and
+    /// must go *before* the structural diff in the list, so that on undo
+    /// (replayed in reverse) it runs last and restores the exact original list.
+    pub(super) fn merged_cells_snapshot_diffs(
+        &self,
+        sheet: u32,
+        old_merged_cells: Vec<MergedCell>,
+    ) -> Result<Vec<Diff>, String> {
+        if self.model.get_merged_cells(sheet)? != old_merged_cells.as_slice() {
+            Ok(vec![Diff::SetMergedCells {
+                sheet,
+                old_value: old_merged_cells.clone(),
+                new_value: old_merged_cells,
+            }])
+        } else {
+            Ok(vec![])
+        }
+    }
 
     pub(crate) fn push_diff_list(&mut self, diff_list: DiffList) {
         self.send_queue.push(QueueDiffs {

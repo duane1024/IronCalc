@@ -18,6 +18,7 @@
 .ic-named-styles-header-title {
   width: 100%;
   font-size: var(--typography-font-size);
+  color: var(--palette-common-black);
 }
 
 .ic-named-styles-content {
@@ -33,12 +34,13 @@
   justify-content: space-between;
   padding: 0 8px;
   gap: 8px;
+  color: var(--palette-common-black);
   border-bottom: 1px solid var(--palette-grey-300);
 }
 
 .ic-named-styles-edit-header-title {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--typography-font-size);
   font-weight: 500;
 }
 
@@ -191,6 +193,7 @@
   line-height: 1;
   font-family: var(--typography-font-family);
   font-weight: 400;
+  color: var(--palette-common-black);
 }
 
 .ic-named-styles-manage-item-name {

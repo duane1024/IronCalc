@@ -438,7 +438,7 @@ impl<'a> UserModel<'a> {
                     worksheet.frozen_rows = old_data.frozen_rows;
                     worksheet.state = old_data.state.clone();
                     worksheet.color = old_data.color.clone();
-                    worksheet.merge_cells = old_data.merge_cells.clone();
+                    worksheet.merged_cells = old_data.merged_cells.clone();
                     worksheet.shared_formulas = old_data.shared_formulas.clone();
                     self.model.reset_parsed_structures();
 
@@ -621,6 +621,27 @@ impl<'a> UserModel<'a> {
                         cf.priority = *priority_b;
                     }
                     needs_evaluation = true;
+                }
+                Diff::SetCellLink {
+                    sheet,
+                    row,
+                    column,
+                    old_value,
+                    new_value: _,
+                } => match old_value.as_ref() {
+                    Some(link) => self
+                        .model
+                        .set_cell_link(*sheet, *row, *column, link.clone())?,
+                    None => self.model.delete_cell_link(*sheet, *row, *column)?,
+                },
+                Diff::SetMergedCells {
+                    sheet,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Merged cells block spilling, so a change can affect results
+                    needs_evaluation = true;
+                    self.model.workbook.worksheet_mut(*sheet)?.merged_cells = old_value.clone();
                 }
                 Diff::SetDataTable {
                     sheet,
@@ -1085,6 +1106,27 @@ impl<'a> UserModel<'a> {
                         cf.priority = *priority_a;
                     }
                     needs_evaluation = true;
+                }
+                Diff::SetCellLink {
+                    sheet,
+                    row,
+                    column,
+                    old_value: _,
+                    new_value,
+                } => match new_value.as_ref() {
+                    Some(link) => self
+                        .model
+                        .set_cell_link(*sheet, *row, *column, link.clone())?,
+                    None => self.model.delete_cell_link(*sheet, *row, *column)?,
+                },
+                Diff::SetMergedCells {
+                    sheet,
+                    old_value: _,
+                    new_value,
+                } => {
+                    // Merged cells block spilling, so a change can affect results
+                    needs_evaluation = true;
+                    self.model.workbook.worksheet_mut(*sheet)?.merged_cells = new_value.clone();
                 }
                 Diff::SetDataTable {
                     sheet,

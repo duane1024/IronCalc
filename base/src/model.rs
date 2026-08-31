@@ -236,6 +236,8 @@ pub struct Model<'a> {
     /// `None` on the normal recalc path, so the check is a cheap miss with zero
     /// overhead. Keyed by (sheet_index, row, column) to match `cells`.
     pub(crate) data_table_overrides: Option<HashMap<(u32, i32, i32), CalcResult>>,
+    /// Dynamic links: links created by formulas like HYPERLINK
+    pub(crate) links: HashMap<(u32, i32, i32), Link>,
 }
 
 // FIXME: Maybe this should be the same as CellReference
@@ -956,12 +958,25 @@ impl<'a> Model<'a> {
                     }
                     // Check that the full spill area (based on actual result dimensions) is clear.
                     // The stored range may be (1,1) on first evaluation, so we must re-check here.
-                    let sheet_data = &self.workbook.worksheets[sheet as usize].sheet_data;
+                    let target_worksheet = &self.workbook.worksheets[sheet as usize];
+                    let sheet_data = &target_worksheet.sheet_data;
                     for r in row..row + array_height {
                         let row_data = sheet_data.get(&r);
                         for c in column..column + array_width {
                             if r == row && c == column {
                                 continue;
+                            }
+                            // Merged cells always block spilling.
+                            if target_worksheet.merged_cell_containing(r, c).is_some() {
+                                return self.set_cells_with_result(
+                                    cell_reference,
+                                    cell,
+                                    &CalcResult::new_error(
+                                        Error::SPILL,
+                                        cell_reference,
+                                        "Cannot spill array result".to_string(),
+                                    ),
+                                );
                             }
                             // A cell blocks spilling only if it is occupied by something
                             // other than an empty cell or a spill cell that already belongs
@@ -1761,6 +1776,7 @@ impl<'a> Model<'a> {
             support: HashMap::new(),
             cf_cache: HashMap::new(),
             data_table_overrides: None,
+            links: HashMap::new(),
         };
 
         model.parse_formulas();
@@ -2143,20 +2159,18 @@ impl<'a> Model<'a> {
         value: &str,
     ) -> Result<(), String> {
         let style_index = self.get_cell_style_index(sheet, row, column)?;
-        let new_style_index;
-        if common::value_needs_quoting(value, self.language) {
-            new_style_index = self
-                .workbook
+
+        let new_style_index = if common::value_needs_quoting(value, self.language) {
+            self.workbook
                 .styles
-                .get_style_with_quote_prefix(style_index)?;
+                .get_style_with_quote_prefix(style_index)?
         } else if self.workbook.styles.style_is_quote_prefix(style_index) {
-            new_style_index = self
-                .workbook
+            self.workbook
                 .styles
-                .get_style_without_quote_prefix(style_index)?;
+                .get_style_without_quote_prefix(style_index)?
         } else {
-            new_style_index = style_index;
-        }
+            style_index
+        };
 
         self.set_cell_with_string(sheet, row, column, value, new_style_index)
     }
@@ -2302,12 +2316,15 @@ impl<'a> Model<'a> {
     // - Part of a dynamic array formula => we delete the formula and we clear the spill
     // - Anchor of a dynamic array formula
     //     => we clear the spill and we set an unevaluated dynamic formula.
-    fn prepare_cell_for_user_input(
+    pub(crate) fn prepare_cell_for_user_input(
         &mut self,
         sheet: u32,
         row: i32,
         column: i32,
     ) -> Result<(), String> {
+        if self.workbook.worksheet(sheet)?.is_covered_cell(row, column) {
+            return Err("Cannot edit a cell that is part of a merged cell".to_string());
+        }
         match self.get_cell_structure(sheet, row, column)? {
             CellStructure::SingleCell => {
                 // noop
@@ -2416,9 +2433,11 @@ impl<'a> Model<'a> {
         // first we make sure we can write in the cell and clear the spills.
         self.prepare_cell_for_user_input(sheet, row, column)?;
         if value.is_empty() {
-            // If the value is empty we just clear the cell
+            // If the value is empty we just clear the cell.
+            // Deleting the contents of a cell also removes its link.
             let ws = self.workbook.worksheet_mut(sheet)?;
             ws.cell_clear_contents(row, column)?;
+            ws.links.remove(&(row, column));
             return Ok(());
         }
 
@@ -2497,6 +2516,10 @@ impl<'a> Model<'a> {
                     }
                     None => {
                         self.set_cell_with_string(sheet, row, column, &value, new_style_index)?;
+                        // If the input looks like an URL or an email address a link is
+                        // attached to the cell, the same way other inputs change the
+                        // number format. Note that a quote prefix prevents this.
+                        self.auto_link_cell(sheet, row, column, &value)?;
                     }
                 }
             }
@@ -2514,6 +2537,15 @@ impl<'a> Model<'a> {
         height: i32,
         value: &str,
     ) -> Result<(), String> {
+        if self
+            .workbook
+            .worksheet(sheet)?
+            .merged_cells
+            .iter()
+            .any(|m| m.intersects(row, column, width, height))
+        {
+            return Err("Cannot set an array formula over merged cells".to_string());
+        }
         self.prepare_cell_for_user_input(sheet, row, column)?;
         // If value starts with "'" then we force the style to be quote_prefix
         let style_index = self.get_cell_style_index(sheet, row, column)?;
@@ -3196,6 +3228,8 @@ impl<'a> Model<'a> {
             retry = false;
             self.cells.clear();
             self.support.clear();
+            // dynamic links (HYPERLINK) are rebuilt on every evaluation
+            self.links.clear();
             self.clear_variable_stack();
             self.clear_lambdas();
 
@@ -3269,8 +3303,7 @@ impl<'a> Model<'a> {
             let snapshot = snapshot_start.elapsed();
             // Require at least two passes before declaring convergence, so we do
             // not stop prematurely when the pass-0 seed happens to match.
-            let converged =
-                iteration >= 1 && Self::snapshots_converged(&previous, &current, delta);
+            let converged = iteration >= 1 && Self::snapshots_converged(&previous, &current, delta);
             if trace {
                 let (changed, max_delta) = Self::snapshot_drift(&previous, &current);
                 eprintln!(
@@ -3344,9 +3377,9 @@ impl<'a> Model<'a> {
                 None => changed += 1,
             }
         }
-        changed += previous.len().saturating_sub(
-            previous.keys().filter(|k| current.contains_key(*k)).count(),
-        );
+        changed += previous
+            .len()
+            .saturating_sub(previous.keys().filter(|k| current.contains_key(*k)).count());
         (changed, max_delta)
     }
 
@@ -3499,6 +3532,13 @@ impl<'a> Model<'a> {
                 }
             }
         }
+        // Deleting the contents of a cell also removes its link
+        ws.links.retain(|&(row, column), _| {
+            row < range.row
+                || row >= range.row + range.height
+                || column < range.column
+                || column >= range.column + range.width
+        });
         Ok(())
     }
 
@@ -3606,6 +3646,13 @@ impl<'a> Model<'a> {
             // we ignore errors here because the cell might have already been cleared as part of an array formula
             let _ = worksheet.cell_clear_contents(row, column);
         }
+        // Deleting the cells also removes their links
+        worksheet.links.retain(|&(row, column), _| {
+            row < area.row
+                || row >= area.row + area.height
+                || column < area.column
+                || column >= area.column + area.width
+        });
         Ok(())
     }
 

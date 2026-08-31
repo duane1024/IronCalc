@@ -199,11 +199,38 @@
     "error_editing_formula": "Errore durante la modifica della formula",
     "error_inserting_columns": "Impossibile inserire le colonne",
     "error_inserting_rows": "Impossibile inserire le righe",
+    "error_merging_cells": "Impossibile unire le celle",
+    "error_merging_cells_content": "Solo una cella della selezione può avere contenuto.",
     "error_moving_columns": "Impossibile spostare le colonne",
     "error_moving_rows": "Impossibile spostare le righe"
   },
   "formula_bar": {
     "manage_named_ranges": "Gestisci intervalli denominati"
+  },
+  "link_dialog": {
+    "body_placeholder": "Messaggio (facoltativo)",
+    "cell_reference_placeholder": "Riferimento di cella",
+    "close": "Chiudi",
+    "delete": "Elimina",
+    "document_tab": "Collegamento al documento",
+    "email_placeholder": "Indirizzo e-mail",
+    "email_tab": "E-mail",
+    "external_tab": "Collegamento esterno",
+    "invalid_email": "Inserisci un indirizzo e-mail valido",
+    "invalid_reference": "Inserisci un riferimento di cella valido",
+    "invalid_url": "Inserisci un URL valido",
+    "label_placeholder": "Etichetta",
+    "save": "Salva",
+    "subject_placeholder": "Oggetto (facoltativo)",
+    "title_add": "Aggiungi collegamento",
+    "title_edit": "Modifica collegamento",
+    "tooltip_placeholder": "Suggerimento (facoltativo)",
+    "url_placeholder": "URL"
+  },
+  "link_tooltip": {
+    "break": "Rimuovi collegamento",
+    "copy": "Copia collegamento",
+    "edit": "Modifica collegamento"
   },
   "name_manager_dialog": {
     "add_new_range": "Aggiungi nuovo intervallo",
@@ -352,6 +379,7 @@
     "text_color_label": "Testo"
   },
   "toolbar": {
+    "add_link": "Inserisci collegamento",
     "align_center": "Allinea al centro",
     "align_left": "Allinea a sinistra",
     "align_right": "Allinea a destra",
@@ -400,6 +428,14 @@
     "format_number": "Formato numero",
     "increase_font_size": "Aumenta dimensione carattere",
     "italic": "Corsivo",
+    "merge_cells": "Unisci celle",
+    "merge_menu": {
+      "merge": "Unisci celle",
+      "merge_across": "Unisci orizzontalmente",
+      "merge_center": "Unisci e centra",
+      "merge_down": "Unisci verticalmente",
+      "unmerge": "Separa celle"
+    },
     "named_styles": "Stili di cella",
     "percentage": "Formato percentuale",
     "redo": "Ripeti",

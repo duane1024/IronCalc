@@ -348,6 +348,8 @@ export interface SelectedView {
 export interface ClipboardCell {
   text: string;
   style: CellStyle;
+  /** The link attached to the cell, when present */
+  link?: Link | null;
 }
 
 /** Rows keyed by row number, each mapping column number to a cell. */
@@ -364,6 +366,22 @@ export interface DefinedName {
   scope?: number;
   formula: string;
 }
+
+/**
+ * A cell hyperlink. The link is cell metadata: the text displayed in the cell
+ * is the cell content, not part of the link.
+ * External links point to a resource outside the workbook (an URL, a mailto:
+ * URI or a file). Internal links point to a location in this workbook: a cell
+ * reference like "Sheet1!A30" or a defined name.
+ */
+export type Link =
+  | { type: "External"; target: string; tooltip?: string | null }
+  | { type: "Internal"; location: string; tooltip?: string | null };
+
+/** A link together with the cell (row, column) it is attached to. A dynamic
+ * link is created by a formula like HYPERLINK: it cannot be edited or deleted,
+ * only the formula can change it. */
+export type CellLink = { row: number; column: number; dynamic: boolean } & Link;
 
 export interface FmtSettings {
   currency: string;

@@ -199,11 +199,38 @@
     "error_editing_formula": "Fehler beim Bearbeiten der Formel",
     "error_inserting_columns": "Spalten konnten nicht eingefügt werden",
     "error_inserting_rows": "Zeilen konnten nicht eingefügt werden",
+    "error_merging_cells": "Zellen können nicht verbunden werden",
+    "error_merging_cells_content": "Nur eine Zelle der Auswahl darf Inhalt haben.",
     "error_moving_columns": "Spalten konnten nicht verschoben werden",
     "error_moving_rows": "Zeilen konnten nicht verschoben werden"
   },
   "formula_bar": {
     "manage_named_ranges": "Benannte Bereiche verwalten"
+  },
+  "link_dialog": {
+    "body_placeholder": "Nachricht (optional)",
+    "cell_reference_placeholder": "Zellbezug",
+    "close": "Schließen",
+    "delete": "Löschen",
+    "document_tab": "Dokumentlink",
+    "email_placeholder": "E-Mail-Adresse",
+    "email_tab": "E-Mail",
+    "external_tab": "Externer Link",
+    "invalid_email": "Bitte gib eine gültige E-Mail-Adresse ein",
+    "invalid_reference": "Bitte gib einen gültigen Zellbezug ein",
+    "invalid_url": "Bitte gib eine gültige URL ein",
+    "label_placeholder": "Beschriftung",
+    "save": "Speichern",
+    "subject_placeholder": "Betreff (optional)",
+    "title_add": "Link hinzufügen",
+    "title_edit": "Link bearbeiten",
+    "tooltip_placeholder": "Tooltip (optional)",
+    "url_placeholder": "URL"
+  },
+  "link_tooltip": {
+    "break": "Link entfernen",
+    "copy": "Link kopieren",
+    "edit": "Link bearbeiten"
   },
   "name_manager_dialog": {
     "add_new_range": "Neuen Bereich hinzufügen",
@@ -352,6 +379,7 @@
     "text_color_label": "Text"
   },
   "toolbar": {
+    "add_link": "Link einfügen",
     "align_center": "Zentrieren",
     "align_left": "Links ausrichten",
     "align_right": "Rechts ausrichten",
@@ -400,6 +428,14 @@
     "format_number": "Zahlenformat",
     "increase_font_size": "Schriftgröße erhöhen",
     "italic": "Kursiv",
+    "merge_cells": "Zellen verbinden",
+    "merge_menu": {
+      "merge": "Zellen verbinden",
+      "merge_across": "Zeilenweise verbinden",
+      "merge_center": "Verbinden und zentrieren",
+      "merge_down": "Spaltenweise verbinden",
+      "unmerge": "Zellverbund aufheben"
+    },
     "named_styles": "Zellformate",
     "percentage": "Als Prozent formatieren",
     "redo": "Wiederholen",

@@ -199,11 +199,38 @@
     "error_editing_formula": "Error editing formula",
     "error_inserting_columns": "Failed to insert columns",
     "error_inserting_rows": "Failed to insert rows",
+    "error_merging_cells": "Cannot merge cells",
+    "error_merging_cells_content": "Only one cell in the selection can have content.",
     "error_moving_columns": "Failed to move columns",
     "error_moving_rows": "Failed to move rows"
   },
   "formula_bar": {
     "manage_named_ranges": "Manage Named Ranges"
+  },
+  "link_dialog": {
+    "body_placeholder": "Body (optional)",
+    "cell_reference_placeholder": "Cell reference",
+    "close": "Close",
+    "delete": "Delete",
+    "document_tab": "Document link",
+    "email_placeholder": "Email address",
+    "email_tab": "Email",
+    "external_tab": "External link",
+    "invalid_email": "Please enter a valid email address",
+    "invalid_reference": "Please enter a valid cell reference",
+    "invalid_url": "Please enter a valid URL",
+    "label_placeholder": "Label",
+    "save": "Save",
+    "subject_placeholder": "Subject (optional)",
+    "title_add": "Add link",
+    "title_edit": "Edit link",
+    "tooltip_placeholder": "Tooltip (optional)",
+    "url_placeholder": "URL"
+  },
+  "link_tooltip": {
+    "break": "Break link",
+    "copy": "Copy link",
+    "edit": "Edit link"
   },
   "name_manager_dialog": {
     "add_new_range": "Add a new range",
@@ -352,6 +379,7 @@
     "text_color_label": "Text"
   },
   "toolbar": {
+    "add_link": "Insert link",
     "align_center": "Align center",
     "align_left": "Align left",
     "align_right": "Align right",
@@ -400,6 +428,14 @@
     "format_number": "Format number",
     "increase_font_size": "Increase font size",
     "italic": "Italic",
+    "merge_cells": "Merge cells",
+    "merge_menu": {
+      "merge": "Merge cells",
+      "merge_across": "Merge across",
+      "merge_center": "Merge & center",
+      "merge_down": "Merge down",
+      "unmerge": "Unmerge cells"
+    },
     "named_styles": "Cell styles",
     "percentage": "Format as percentage",
     "redo": "Redo",

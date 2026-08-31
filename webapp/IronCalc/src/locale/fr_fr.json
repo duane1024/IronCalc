@@ -199,11 +199,38 @@
     "error_editing_formula": "Erreur lors de la modification de la formule",
     "error_inserting_columns": "Échec de l'insertion des colonnes",
     "error_inserting_rows": "Échec de l'insertion des lignes",
+    "error_merging_cells": "Impossible de fusionner les cellules",
+    "error_merging_cells_content": "Une seule cellule de la sélection peut avoir du contenu.",
     "error_moving_columns": "Échec du déplacement des colonnes",
     "error_moving_rows": "Échec du déplacement des lignes"
   },
   "formula_bar": {
     "manage_named_ranges": "Gérer les plages nommées"
+  },
+  "link_dialog": {
+    "body_placeholder": "Message (facultatif)",
+    "cell_reference_placeholder": "Référence de cellule",
+    "close": "Fermer",
+    "delete": "Supprimer",
+    "document_tab": "Lien vers le document",
+    "email_placeholder": "Adresse e-mail",
+    "email_tab": "E-mail",
+    "external_tab": "Lien externe",
+    "invalid_email": "Veuillez saisir une adresse e-mail valide",
+    "invalid_reference": "Veuillez saisir une référence de cellule valide",
+    "invalid_url": "Veuillez saisir une URL valide",
+    "label_placeholder": "Libellé",
+    "save": "Enregistrer",
+    "subject_placeholder": "Objet (facultatif)",
+    "title_add": "Ajouter un lien",
+    "title_edit": "Modifier le lien",
+    "tooltip_placeholder": "Info-bulle (facultatif)",
+    "url_placeholder": "URL"
+  },
+  "link_tooltip": {
+    "break": "Supprimer le lien",
+    "copy": "Copier le lien",
+    "edit": "Modifier le lien"
   },
   "name_manager_dialog": {
     "add_new_range": "Ajouter une nouvelle plage",
@@ -352,6 +379,7 @@
     "text_color_label": "Texte"
   },
   "toolbar": {
+    "add_link": "Insérer un lien",
     "align_center": "Centrer",
     "align_left": "Aligner à gauche",
     "align_right": "Aligner à droite",
@@ -400,6 +428,14 @@
     "format_number": "Format de nombre",
     "increase_font_size": "Augmenter la taille de la police",
     "italic": "Italique",
+    "merge_cells": "Fusionner les cellules",
+    "merge_menu": {
+      "merge": "Fusionner les cellules",
+      "merge_across": "Fusionner horizontalement",
+      "merge_center": "Fusionner et centrer",
+      "merge_down": "Fusionner verticalement",
+      "unmerge": "Annuler la fusion"
+    },
     "named_styles": "Styles de cellule",
     "percentage": "Formater pourcentage",
     "redo": "Rétablir",

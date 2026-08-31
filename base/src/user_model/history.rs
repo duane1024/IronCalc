@@ -5,8 +5,8 @@ use bitcode::{Decode, Encode};
 use crate::{
     cf_types::CfRule,
     types::{
-        CalcProperties, Cell, Col, Color, DataTable, Row, SheetState, Style, StyleIncludes, Theme,
-        Worksheet,
+        CalcProperties, Cell, Col, Color, DataTable, Link, MergedCell, Row, SheetState, Style,
+        StyleIncludes, Theme, Worksheet,
     },
 };
 
@@ -286,6 +286,15 @@ pub(crate) enum Diff {
         new_range: String,
         new_rule: Box<CfRule>,
     },
+    /// Sets (`new_value` is `Some`) or deletes (`new_value` is `None`) the link
+    /// attached to a cell. `old_value` is the link previously in the cell if any.
+    SetCellLink {
+        sheet: u32,
+        row: i32,
+        column: i32,
+        old_value: Box<Option<Link>>,
+        new_value: Box<Option<Link>>,
+    },
     /// Swaps the priorities of the two CF rules at `index_a` and `index_b`.
     /// `priority_a`/`priority_b` are their priorities *before* the swap.
     SwapConditionalFormattingPriority {
@@ -294,6 +303,18 @@ pub(crate) enum Diff {
         index_b: u32,
         priority_a: u32,
         priority_b: u32,
+    },
+    /// Sets the full list of merged cells of a sheet: apply installs
+    /// `new_value`, undo installs `old_value`. Structural actions (insert,
+    /// delete or move of rows and columns) displace merged ranges on their own
+    /// when they are replayed, but their undo cannot always reconstruct the
+    /// original ranges; those actions push this diff with
+    /// `old_value == new_value` (a no-op on apply) so that undo restores the
+    /// exact previous list.
+    SetMergedCells {
+        sheet: u32,
+        old_value: Vec<MergedCell>,
+        new_value: Vec<MergedCell>,
     },
     // Data table diffs. NOTE: new variants MUST be appended at the end — the
     // `Diff` enum is bitcode-encoded by positional discriminant, so inserting in

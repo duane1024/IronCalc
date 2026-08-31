@@ -361,7 +361,7 @@ fn parse_time_with_normalization(text: &str) -> Option<f64> {
     None
 }
 
-// Normalize time components with overflow handling (like Excel)
+// Normalize time components with overflow handling
 fn normalize_time_components(hour: i32, minute: i32, second: i32) -> f64 {
     // Convert everything to total seconds
     let mut total_seconds = hour * 3600 + minute * 60 + second;
@@ -537,6 +537,7 @@ pub(crate) fn parse_datevalue_text(value: &str) -> Result<i32, String> {
     }
 
     let year_str = parts[year_idx];
+    let year_is_first = year_idx == 0;
     // Remove the year from the remaining vector to process day / month.
     parts.remove(year_idx);
     let part1 = parts[0];
@@ -546,7 +547,10 @@ pub(crate) fn parse_datevalue_text(value: &str) -> Result<i32, String> {
     let is_numeric = |s: &str| s.chars().all(char::is_numeric);
 
     // Determine month and day.
-    let (month_str, day_str) = if !is_numeric(part1) {
+    let (month_str, day_str) = if year_is_first {
+        // Year-first dates use the unambiguous YYYY-MM-DD order.
+        (part1, part2)
+    } else if !is_numeric(part1) {
         // textual month in first
         (part1, part2)
     } else if !is_numeric(part2) {
@@ -573,7 +577,13 @@ pub(crate) fn parse_datevalue_text(value: &str) -> Result<i32, String> {
     }
 
     match date_to_serial_number(day, month, year) {
-        Ok(n) => Ok(n),
+        Ok(n) => {
+            if !(MINIMUM_DATE_SERIAL_NUMBER..=MAXIMUM_DATE_SERIAL_NUMBER).contains(&n) {
+                Err("Not a valid date".to_string())
+            } else {
+                Ok(n)
+            }
+        }
         Err(_) => Err("Not a valid date".to_string()),
     }
 }
@@ -629,7 +639,7 @@ impl<'a> Model<'a> {
         if args_count != 2 {
             return CalcResult::new_args_number_error(cell);
         }
-        let serial_number = match self.get_number(&args[0], cell) {
+        let serial_number = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => {
                 let t = c.floor() as i64;
                 if t < 0 {
@@ -710,9 +720,14 @@ impl<'a> Model<'a> {
         };
 
         fn date_node(year_f: f64, month_f: f64, day_f: f64) -> ArrayNode {
-            let year = year_f.floor() as i32;
+            let mut year = year_f.floor() as i32;
             if year < 0 {
                 return ArrayNode::Error(Error::NUM);
+            }
+            // Excel: a year between 0 and 1899 (inclusive) is treated as an
+            // offset from 1900, e.g. DATE(100, 1, 1) is 2000-01-01
+            if year < 1900 {
+                year += 1900;
             }
             match permissive_date_to_serial_number(
                 day_f.floor() as i32,
@@ -803,7 +818,7 @@ impl<'a> Model<'a> {
         if args_count != 2 {
             return CalcResult::new_args_number_error(cell);
         }
-        let serial_number = match self.get_number(&args[0], cell) {
+        let serial_number = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
@@ -811,7 +826,7 @@ impl<'a> Model<'a> {
             Ok(d) => d,
             Err(e) => return e,
         };
-        let months = match self.get_number(&args[1], cell) {
+        let months = match self.get_number_no_bools(&args[1], cell) {
             Ok(c) => {
                 let t = c.trunc();
                 t as i32
@@ -828,7 +843,7 @@ impl<'a> Model<'a> {
         };
 
         let serial_number = native_date.num_days_from_ce() - EXCEL_DATE_BASE;
-        if serial_number < MINIMUM_DATE_SERIAL_NUMBER {
+        if !(MINIMUM_DATE_SERIAL_NUMBER..=MAXIMUM_DATE_SERIAL_NUMBER).contains(&serial_number) {
             return CalcResult::Error {
                 error: Error::NUM,
                 origin: cell,
@@ -947,11 +962,11 @@ impl<'a> Model<'a> {
         if !(2..=3).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let start_serial = match self.get_number(&args[0], cell) {
+        let start_serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(n) => n.floor() as i64,
             Err(e) => return e,
         };
-        let end_serial = match self.get_number(&args[1], cell) {
+        let end_serial = match self.get_number_no_bools(&args[1], cell) {
             Ok(n) => n.floor() as i64,
             Err(e) => return e,
         };
@@ -1087,11 +1102,11 @@ impl<'a> Model<'a> {
         if !(2..=4).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let start_serial = match self.get_number(&args[0], cell) {
+        let start_serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(n) => n.floor() as i64,
             Err(e) => return e,
         };
-        let end_serial = match self.get_number(&args[1], cell) {
+        let end_serial = match self.get_number_no_bools(&args[1], cell) {
             Ok(n) => n.floor() as i64,
             Err(e) => return e,
         };
@@ -1284,14 +1299,16 @@ impl<'a> Model<'a> {
                     message: "Invalid date".to_string(),
                 },
             },
-            CalcResult::Number(f) => CalcResult::Number(f.floor()),
-            CalcResult::Boolean(b) => {
-                if b {
-                    CalcResult::Number(1.0)
-                } else {
-                    CalcResult::Number(0.0)
-                }
-            }
+            CalcResult::Number(_) => CalcResult::Error {
+                error: Error::VALUE,
+                origin: cell,
+                message: "Invalid date".to_string(),
+            },
+            CalcResult::Boolean(_) => CalcResult::Error {
+                error: Error::VALUE,
+                origin: cell,
+                message: "Invalid date".to_string(),
+            },
             err @ CalcResult::Error { .. } => err,
             CalcResult::Range { .. } | CalcResult::Array(_) | CalcResult::Lambda(_) => {
                 CalcResult::Error {
@@ -1300,7 +1317,11 @@ impl<'a> Model<'a> {
                     message: "Arrays not supported yet".to_string(),
                 }
             }
-            CalcResult::EmptyCell | CalcResult::EmptyArg => CalcResult::Number(0.0),
+            CalcResult::EmptyCell | CalcResult::EmptyArg => CalcResult::Error {
+                error: Error::VALUE,
+                origin: cell,
+                message: "Invalid date".to_string(),
+            },
         }
     }
 
@@ -1608,7 +1629,7 @@ impl<'a> Model<'a> {
         if !(2..=3).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let start_serial = match self.get_number(&args[0], cell) {
+        let start_serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
@@ -1616,8 +1637,8 @@ impl<'a> Model<'a> {
             Ok(d) => d,
             Err(e) => return e,
         };
-        let mut days = match self.get_number(&args[1], cell) {
-            Ok(f) => f as i32,
+        let mut days = match self.get_number_no_bools(&args[1], cell) {
+            Ok(f) => f.floor() as i32,
             Err(s) => return s,
         };
         let weekend = [false, false, false, false, false, true, true];
@@ -1627,11 +1648,25 @@ impl<'a> Model<'a> {
         };
         while days != 0 {
             if days > 0 {
+                if date.num_days_from_ce() - EXCEL_DATE_BASE >= MAXIMUM_DATE_SERIAL_NUMBER {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: DATE_OUT_OF_RANGE_MESSAGE.to_string(),
+                    };
+                }
                 date += chrono::Duration::days(1);
                 if !Self::is_weekend(date.weekday(), &weekend) && !holiday_set.contains(&date) {
                     days -= 1;
                 }
             } else {
+                if date.num_days_from_ce() - EXCEL_DATE_BASE <= MINIMUM_DATE_SERIAL_NUMBER {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: DATE_OUT_OF_RANGE_MESSAGE.to_string(),
+                    };
+                }
                 date -= chrono::Duration::days(1);
                 if !Self::is_weekend(date.weekday(), &weekend) && !holiday_set.contains(&date) {
                     days += 1;
@@ -1674,7 +1709,7 @@ impl<'a> Model<'a> {
         if !(2..=4).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let start_serial = match self.get_number(&args[0], cell) {
+        let start_serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
@@ -1682,8 +1717,8 @@ impl<'a> Model<'a> {
             Ok(d) => d,
             Err(e) => return e,
         };
-        let mut days = match self.get_number(&args[1], cell) {
-            Ok(f) => f as i32,
+        let mut days = match self.get_number_no_bools(&args[1], cell) {
+            Ok(f) => f.floor() as i32,
             Err(s) => return s,
         };
         let weekend_mask = match self.weekend_mask(args.get(2), cell) {
@@ -1706,12 +1741,26 @@ impl<'a> Model<'a> {
 
         while days != 0 {
             if days > 0 {
+                if date.num_days_from_ce() - EXCEL_DATE_BASE >= MAXIMUM_DATE_SERIAL_NUMBER {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: DATE_OUT_OF_RANGE_MESSAGE.to_string(),
+                    };
+                }
                 date += chrono::Duration::days(1);
                 if !Self::is_weekend(date.weekday(), &weekend_mask) && !holiday_set.contains(&date)
                 {
                     days -= 1;
                 }
             } else {
+                if date.num_days_from_ce() - EXCEL_DATE_BASE <= MINIMUM_DATE_SERIAL_NUMBER {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: DATE_OUT_OF_RANGE_MESSAGE.to_string(),
+                    };
+                }
                 date -= chrono::Duration::days(1);
                 if !Self::is_weekend(date.weekday(), &weekend_mask) && !holiday_set.contains(&date)
                 {
@@ -1727,11 +1776,11 @@ impl<'a> Model<'a> {
         if !(2..=3).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let mut start_serial = match self.get_number(&args[0], cell) {
+        let mut start_serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
-        let mut end_serial = match self.get_number(&args[1], cell) {
+        let mut end_serial = match self.get_number_no_bools(&args[1], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
@@ -1746,7 +1795,7 @@ impl<'a> Model<'a> {
             std::mem::swap(&mut start_serial, &mut end_serial);
         }
         let basis = if args.len() == 3 {
-            match self.get_number(&args[2], cell) {
+            match self.get_number_no_bools(&args[2], cell) {
                 Ok(f) => f as i32,
                 Err(s) => return s,
             }
