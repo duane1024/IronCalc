@@ -5,6 +5,7 @@ mod cell_is;
 mod duplicates;
 mod formula;
 mod priority;
+mod range_clipping;
 mod stop_if_true;
 mod text;
 mod time_period;

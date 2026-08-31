@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use crate::constants::{LAST_COLUMN, LAST_ROW};
 use crate::expressions::utils::parse_reference_a1;
 use crate::formatter::dates::{date_to_serial_number, from_excel_date};
+use crate::worksheet::WorksheetDimension;
 use crate::{
     calc_result::CalcResult,
     cell::CellValue,
@@ -46,6 +48,62 @@ fn parse_range_part(s: &str) -> Option<(i32, i32, i32, i32)> {
         }
         _ => None,
     }
+}
+
+/// Clips each `(row1, col1, row2, col2)` range's TRAILING edge (`row2`/`col2`) down
+/// to the worksheet's used dimension, but only on an axis whose declared bound
+/// already reaches the sheet's absolute ceiling (`LAST_ROW` / `LAST_COLUMN`) --
+/// i.e. only a genuine "whole column" or "whole row" declaration, the shape
+/// Excel emits for "apply to the whole column" and the one the memory/perf bug
+/// is about (e.g. `D173:M1048576`). A range whose bound is dropped entirely
+/// below the used dimension on a clipped axis (rare: the range starts beyond
+/// the sheet's last used row/column) is dropped.
+///
+/// Deliberately narrower than "clip every declared range to the used
+/// dimension": that broader form is unsound for two reasons found while
+/// building this fix (see the regression tests below and in
+/// `test/conditional_formatting` / `test/user_model/test_conditional_formatting.rs`):
+///
+///   - Rules that key off the *absence* of content (`Blanks`, `NoErrors`, and
+///     arbitrary `Formula` rules whose condition doesn't depend on the current
+///     cell's own value, e.g. row banding) legitimately match cells with no
+///     content, including ones a user deliberately left blank inside an
+///     ordinary, modestly-sized declared range (a few rows/columns past the
+///     last populated cell) -- clipping those away silently drops real matches.
+///   - A multi-area rule's relative formula is parsed once against the anchor
+///     (the bounding box of *all* its areas). Dropping one area because it
+///     doesn't overlap the used dimension shifts that anchor and corrupts the
+///     relative offset baked into every other area's evaluation.
+///
+/// Both hazards evaporate once clipping is scoped to axes that actually reach
+/// the sheet's hard ceiling: a normal bounded range is never touched, and a
+/// whole-column/row rule only ever has ONE area per range (`parse_sqref`
+/// keeps each space-separated area distinct), so there is nothing for a
+/// dropped whole-column area to shift an anchor away from.
+fn clip_ranges_to_dimension(
+    ranges: &[(i32, i32, i32, i32)],
+    dimension: &WorksheetDimension,
+) -> Vec<(i32, i32, i32, i32)> {
+    ranges
+        .iter()
+        .filter_map(|&(r1, c1, r2, c2)| {
+            let row2 = if r2 >= LAST_ROW {
+                r2.min(dimension.max_row)
+            } else {
+                r2
+            };
+            let col2 = if c2 >= LAST_COLUMN {
+                c2.min(dimension.max_column)
+            } else {
+                c2
+            };
+            if r1 <= row2 && c1 <= col2 {
+                Some((r1, c1, row2, col2))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Interpolates a color along the color scale for a given value.
@@ -139,14 +197,32 @@ impl<'a> Model<'a> {
         self.cf_cache.clear();
         let sheet_count = self.workbook.worksheets.len();
         for sheet_idx in 0..sheet_count {
-            let mut cfs = self.workbook.worksheets[sheet_idx]
-                .conditional_formatting
-                .clone();
+            let sheet = &self.workbook.worksheets[sheet_idx];
+            if sheet.conditional_formatting.is_empty() {
+                continue;
+            }
+            // A genuinely empty sheet has no content anywhere. `Worksheet::dimension()`
+            // can't express "no used cells" -- for an empty sheet it falls back to a
+            // phantom (1,1,1,1) placeholder so it never hands back an inverted range --
+            // so check emptiness directly here instead of letting that placeholder be
+            // clipped to as though cell A1 had content. A rule over an empty sheet
+            // produces no results either way.
+            if sheet.sheet_data.is_empty() {
+                continue;
+            }
+            let dimension = sheet.dimension();
+            let mut cfs = sheet.conditional_formatting.clone();
             // Lower priority number = higher priority; process high-priority first so that
             // the first writer into cf_cache wins.
             cfs.sort_by_key(|cf| cf.priority);
             for cf in cfs {
                 let ranges = parse_sqref(&cf.range);
+                if ranges.is_empty() {
+                    continue;
+                }
+                // Clip whole-column/row bounds to the sheet's used dimension -- see
+                // `clip_ranges_to_dimension` for what is (and deliberately isn't) clipped.
+                let ranges = clip_ranges_to_dimension(&ranges, &dimension);
                 if ranges.is_empty() {
                     continue;
                 }
@@ -1753,5 +1829,106 @@ impl<'a> Model<'a> {
         }
         ws.conditional_formatting.insert(index, cf);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dim(min_row: i32, max_row: i32, min_column: i32, max_column: i32) -> WorksheetDimension {
+        WorksheetDimension {
+            min_row,
+            max_row,
+            min_column,
+            max_column,
+        }
+    }
+
+    #[test]
+    fn whole_column_range_clips_to_used_rows() {
+        // D173:M1048576 declared (a genuine whole-column rule -- row2 is the sheet's
+        // absolute ceiling), but only rows 1..=200 are actually used.
+        let ranges = vec![(173, 4, LAST_ROW, 13)];
+        let dimension = dim(1, 200, 1, 20);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(173, 4, 200, 13)]
+        );
+    }
+
+    #[test]
+    fn whole_column_range_starting_beyond_the_used_rows_is_dropped() {
+        // A whole-column rule declared to start at row 2000, but the sheet's used
+        // rows only go up to 10: clipping row2 down to 10 leaves row1 (2000) past
+        // it, so the range is empty and dropped.
+        let ranges = vec![(2000, 1, LAST_ROW, 5)];
+        let dimension = dim(1, 10, 1, 10);
+        assert!(clip_ranges_to_dimension(&ranges, &dimension).is_empty());
+    }
+
+    #[test]
+    fn range_wholly_inside_dimension_is_unchanged() {
+        let ranges = vec![(2, 2, 4, 4)];
+        let dimension = dim(1, 10, 1, 10);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(2, 2, 4, 4)]
+        );
+    }
+
+    // Deliberate scope guard: an ordinary, user-bounded range that extends past
+    // the currently-used dimension (but does NOT reach the sheet's absolute
+    // row/column ceiling) is left exactly as declared -- it is not a "whole
+    // column/row" rule, so it is not this fix's concern, and clipping it would
+    // silently drop legitimate matches for rule types that key off the absence
+    // of content (Blanks, NoErrors, content-independent Formula rules).
+    #[test]
+    fn bounded_range_past_the_used_dimension_is_left_untouched() {
+        let ranges = vec![(1, 1, 100, 3)];
+        let dimension = dim(1, 4, 1, 3);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(1, 1, 100, 3)]
+        );
+    }
+
+    #[test]
+    fn partially_overlapping_range_is_trimmed_on_the_right_edges_only() {
+        // Range starts inside the used dimension (row 3, col 3) but its declared
+        // bounds reach the sheet's absolute ceiling on both axes; only the
+        // trailing (max) edges should move -- the leading (min) edges, already
+        // inside, stay put.
+        let ranges = vec![(3, 3, LAST_ROW, LAST_COLUMN)];
+        let dimension = dim(1, 10, 1, 10);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(3, 3, 10, 10)]
+        );
+    }
+
+    #[test]
+    fn whole_row_range_clips_columns_only() {
+        // A1:XFD5 -- whole ROW, columns reach LAST_COLUMN but rows don't reach
+        // LAST_ROW, so only the column edge is clipped.
+        let ranges = vec![(1, 1, 5, LAST_COLUMN)];
+        let dimension = dim(1, 10, 1, 8);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(1, 1, 5, 8)]
+        );
+    }
+
+    #[test]
+    fn multiple_ranges_are_clipped_independently() {
+        // The first area is a genuine whole-column rule and gets clipped; the
+        // second is an ordinary bounded area (doesn't reach LAST_ROW/LAST_COLUMN)
+        // and is left untouched, even though it lies outside the used dimension.
+        let ranges = vec![(1, 1, LAST_ROW, 1), (500, 500, 600, 600)];
+        let dimension = dim(1, 5, 1, 5);
+        assert_eq!(
+            clip_ranges_to_dimension(&ranges, &dimension),
+            vec![(1, 1, 5, 1), (500, 500, 600, 600)]
+        );
     }
 }
