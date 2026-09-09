@@ -192,6 +192,9 @@
     }
   },
   "error_dialog": {
+    "error_autofill": "Automatisches Ausfüllen nicht möglich",
+    "error_autofill_array": "Der Ausfüllbereich kann eine Matrixformel nicht teilweise abdecken.",
+    "error_autofill_merged": "Der Ausfüllbereich kann eine verbundene Zelle nicht teilweise abdecken.",
     "error_clipboard_paste": "Zugriff auf die Zwischenablage verweigert. Bitte erlauben Sie Zwischenablage-Berechtigungen in Ihrem Browser.",
     "error_deleting_cells": "Zellen konnten nicht gelöscht werden",
     "error_deleting_columns": "Spalten konnten nicht gelöscht werden",
@@ -202,7 +205,9 @@
     "error_merging_cells": "Zellen können nicht verbunden werden",
     "error_merging_cells_content": "Nur eine Zelle der Auswahl darf Inhalt haben.",
     "error_moving_columns": "Spalten konnten nicht verschoben werden",
-    "error_moving_rows": "Zeilen konnten nicht verschoben werden"
+    "error_moving_rows": "Zeilen konnten nicht verschoben werden",
+    "error_paste": "Einfügen nicht möglich",
+    "error_paste_merged": "Der eingefügte Bereich kann eine verbundene Zelle nicht teilweise abdecken."
   },
   "formula_bar": {
     "manage_named_ranges": "Benannte Bereiche verwalten"

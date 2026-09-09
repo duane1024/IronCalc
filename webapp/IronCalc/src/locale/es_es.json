@@ -192,6 +192,9 @@
     }
   },
   "error_dialog": {
+    "error_autofill": "No se puede autorrellenar",
+    "error_autofill_array": "El área de relleno no puede cubrir parte de una fórmula matricial.",
+    "error_autofill_merged": "El área de relleno no puede cubrir parte de una celda combinada.",
     "error_clipboard_paste": "Acceso al portapapeles denegado. Por favor, permite el acceso al portapapeles en tu navegador.",
     "error_deleting_cells": "Error al eliminar las celdas",
     "error_deleting_columns": "Error al eliminar las columnas",
@@ -202,7 +205,9 @@
     "error_merging_cells": "No se pueden combinar las celdas",
     "error_merging_cells_content": "Solo una celda de la selección puede tener contenido.",
     "error_moving_columns": "Error al mover las columnas",
-    "error_moving_rows": "Error al mover las filas"
+    "error_moving_rows": "Error al mover las filas",
+    "error_paste": "No se puede pegar",
+    "error_paste_merged": "El área pegada no puede cubrir parte de una celda combinada."
   },
   "formula_bar": {
     "manage_named_ranges": "Gestionar rangos con nombre"

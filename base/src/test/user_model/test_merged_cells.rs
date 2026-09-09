@@ -749,41 +749,25 @@ fn navigate_to_edge_treats_merge_as_one_cell() {
 // ── Autofill and clipboard ───────────────────────────────────────────────────
 
 #[test]
-fn auto_fill_over_merges_is_rejected() {
+fn auto_fill_partially_covering_a_merge_is_rejected() {
     let mut model = new_empty_user_model();
     model.set_user_input(0, 1, 2, "1").unwrap();
     // merge B3:C4
     model.merge_cells(&area(0, 3, 2, 2, 2)).unwrap();
     model.flush_send_queue();
 
-    // filling B1 down to B4 crosses the merge
+    // filling B1 down to B4 covers only the left half of the merge
     assert_eq!(
         model.auto_fill_rows(&area(0, 1, 2, 1, 1), 4),
-        Err("Cannot auto-fill over merged cells".to_string())
+        Err("Cannot auto-fill: a merged cell partially overlaps the fill area".to_string())
     );
     // filling B1 right to C1 is fine (the merge is below)
     model.auto_fill_columns(&area(0, 1, 2, 1, 1), 3).unwrap();
     assert_eq!(model.get_formatted_cell_value(0, 1, 3), Ok("1".to_string()));
 }
 
-#[test]
-fn paste_over_merges_is_rejected() {
-    let mut model = new_empty_user_model();
-    model.set_user_input(0, 1, 1, "42").unwrap();
-    // merge A2:B3
-    model.merge_cells(&area(0, 2, 1, 2, 2)).unwrap();
-
-    model.set_selected_cell(1, 1).unwrap();
-    let clipboard = model.copy_to_clipboard().unwrap();
-    model.set_selected_cell(2, 1).unwrap();
-    assert_eq!(
-        model.paste_from_clipboard(0, clipboard.range, &clipboard.data, false),
-        Err("Cannot paste over merged cells".to_string())
-    );
-    // the model is untouched
-    assert_eq!(model.get_merged_cells(0).unwrap(), vec![merged(2, 1, 2, 2)]);
-    assert_eq!(model.get_formatted_cell_value(0, 2, 1), Ok("".to_string()));
-}
+// Pasting over merged cells follows the containment rule; the cases live in
+// test_paste_merged_cells.rs.
 
 #[test]
 fn copy_paste_recreates_the_merge_at_the_target() {
@@ -892,26 +876,6 @@ fn cut_paste_moves_the_merge_to_the_target() {
     assert_eq!(
         model.get_formatted_cell_value(0, 10, 10),
         Ok("5".to_string())
-    );
-}
-
-#[test]
-fn paste_csv_over_merges_is_rejected() {
-    let mut model = new_empty_user_model();
-    // merge B2:C3
-    model.merge_cells(&area(0, 2, 2, 2, 2)).unwrap();
-    assert_eq!(
-        model.paste_csv_string(&area(0, 1, 1, 1, 1), "1\t2\n3\t4"),
-        Err("Cannot paste over merged cells".to_string())
-    );
-    // pasting away from the merge works
-    model.set_selected_cell(10, 1).unwrap();
-    model
-        .paste_csv_string(&area(0, 10, 1, 1, 1), "1\t2\n3\t4")
-        .unwrap();
-    assert_eq!(
-        model.get_formatted_cell_value(0, 11, 2),
-        Ok("4".to_string())
     );
 }
 

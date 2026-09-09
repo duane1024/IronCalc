@@ -351,12 +351,18 @@ impl<'a> Model<'a> {
                 automatic: _,
                 child,
             } => match self.evaluate_node_with_reference(child, cell) {
-                CalcResult::Range { left, right } => CalcResult::Range { left, right },
-                _ => CalcResult::new_error(
-                    Error::ERROR,
-                    cell,
-                    format!("Error with Implicit Intersection in cell {cell:?}"),
-                ),
+                CalcResult::Range { left, right } => {
+                    match implicit_intersection(&cell, &Range { left, right }) {
+                        Some(r) => CalcResult::Range { left: r, right: r },
+                        None => CalcResult::new_error(
+                            Error::VALUE,
+                            cell,
+                            format!("Error with Implicit Intersection in cell {cell:?}"),
+                        ),
+                    }
+                }
+                // The implicit intersection of a scalar is the scalar itself.
+                other => other,
             },
             _ => self.evaluate_node_in_context(node, cell),
         }
@@ -397,6 +403,29 @@ impl<'a> Model<'a> {
                 origin: cell,
                 message: "Invalid range".to_string(),
             },
+        }
+    }
+
+    /// Collapses a reference-context result to a value: a Range is implicitly
+    /// intersected at `cell` and the intersected cell evaluated; anything else
+    /// (scalar, array, error) passes through unchanged.
+    pub(crate) fn implicit_intersection_to_value(
+        &mut self,
+        result: CalcResult,
+        cell: CellReferenceIndex,
+    ) -> CalcResult {
+        match result {
+            CalcResult::Range { left, right } => {
+                match implicit_intersection(&cell, &Range { left, right }) {
+                    Some(cell_reference) => self.evaluate_cell(cell_reference),
+                    None => CalcResult::new_error(
+                        Error::VALUE,
+                        cell,
+                        format!("Error with Implicit Intersection in cell {cell:?}"),
+                    ),
+                }
+            }
+            other => other,
         }
     }
 
@@ -840,19 +869,10 @@ impl<'a> Model<'a> {
             ImplicitIntersection {
                 automatic: _,
                 child,
-            } => match self.evaluate_node_with_reference(child, cell) {
-                CalcResult::Range { left, right } => {
-                    match implicit_intersection(&cell, &Range { left, right }) {
-                        Some(cell_reference) => self.evaluate_cell(cell_reference),
-                        None => CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            format!("Error with Implicit Intersection in cell {cell:?}"),
-                        ),
-                    }
-                }
-                _ => self.evaluate_node_in_context(child, cell),
-            },
+            } => {
+                let result = self.evaluate_node_with_reference(child, cell);
+                self.implicit_intersection_to_value(result, cell)
+            }
             LambdaDefKind { parameters, body } => {
                 let id = self.get_next_lambda_id();
                 self.lambdas.insert(id, (parameters.clone(), *body.clone()));
