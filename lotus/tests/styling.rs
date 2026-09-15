@@ -10,7 +10,7 @@
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 
-use ironcalc_lotus::base::types::{BorderStyle, HorizontalAlignment};
+use ironcalc_lotus::base::types::{BorderStyle, Color, HorizontalAlignment};
 use ironcalc_lotus::load_from_wk3_bytes;
 
 /// 26-byte WK3 BOF body marking this as Lotus 1-2-3 R3 (file_code=0x1000,
@@ -132,8 +132,8 @@ fn synthetic_styling_pipeline() {
 
     // back_byte = 0x82: low 5 bits = 2 → light green palette.
     assert_eq!(
-        style.fill.fg_color.as_deref(),
-        Some("#00FF00"),
+        style.fill.color,
+        Color::Rgb("#00FF00".to_string()),
         "background"
     );
 

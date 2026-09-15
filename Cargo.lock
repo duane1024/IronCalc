@@ -398,7 +398,7 @@ dependencies = [
  "bitcode",
  "chrono",
  "ironcalc",
- "ironcalc_base",
+ "ironcalc_base 0.8.3",
  "itertools",
  "roxmltree",
  "serde",
@@ -428,11 +428,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "ironcalc_lotus"
-version = "0.7.1"
+name = "ironcalc_base"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce1dd83cada7da742782076daccda92e33162e9f4396a958ae3e7c5bb64e6a01"
 dependencies = [
  "bitcode",
- "ironcalc_base",
+ "chrono",
+ "chrono-tz",
+ "csv",
+ "js-sys",
+ "rand",
+ "regex",
+ "regex-lite",
+ "ryu",
+ "serde",
+ "statrs",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "ironcalc_lotus"
+version = "0.8.3"
+dependencies = [
+ "bitcode",
+ "ironcalc_base 0.8.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror",
 ]
 
@@ -1102,7 +1122,7 @@ name = "wasm"
 version = "0.8.4"
 dependencies = [
  "ironcalc",
- "ironcalc_base",
+ "ironcalc_base 0.8.3",
  "serde",
  "serde-wasm-bindgen",
  "time",

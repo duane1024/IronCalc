@@ -1,6 +1,6 @@
 [package]
 name = "ironcalc_lotus"
-version = "0.7.1"
+version = "0.8.3"
 authors = ["IronCalc <info@ironcalc.com>"]
 edition = "2021"
 homepage = "https://www.ironcalc.com"
@@ -9,7 +9,11 @@ description = "Lotus 1-2-3 (.WK3) import for IronCalc"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-ironcalc_base = { path = "../base", version = "0.7" }
+# Deliberately the published crate, NOT `path = "../base"`.  Consumers
+# (l123) build against crates.io `ironcalc`, which carries its own
+# `ironcalc_base`; a path dep here would put a second, newer copy of the
+# same crate in their graph and the two would not unify.
+ironcalc_base = "0.8"
 thiserror = "1.0"
 bitcode = "0.6.8"
 

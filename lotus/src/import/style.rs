@@ -19,7 +19,7 @@
 //! `LotusFontBuffer` / `aLotusPatternPool` so that real files which do
 //! contain styling round-trip the same way LO would render them.
 
-use ironcalc_base::types::{Border, BorderItem, BorderStyle, Fill, Style};
+use ironcalc_base::types::{Border, BorderItem, BorderStyle, Color, Fill, Style};
 use ironcalc_base::Model;
 
 use crate::import::encoding::cp437_to_string;
@@ -157,7 +157,7 @@ fn border_style(bits: u8) -> Option<BorderStyle> {
 fn border_item(bits: u8) -> Option<BorderItem> {
     border_style(bits).map(|style| BorderItem {
         style,
-        color: Some("#000000".to_string()),
+        color: Color::Rgb("#000000".to_string()),
     })
 }
 
@@ -201,16 +201,17 @@ pub fn build_style(
     // Font colour: 0 = no override; 1..6 = palette; 7 = explicit white.
     let font_col = attr.font_color & 0x07;
     if font_col != 0 {
-        style.font.color = Some(palette(font_col).to_string());
+        style.font.color = Color::Rgb(palette(font_col).to_string());
     }
 
     // Background: low 5 bits of nBack pick a palette colour; bit 7 is centered.
     let back = attr.back_byte & 0x1F;
     if back != 0 {
+        // 0.8 collapsed Fill's pattern_type/fg_color/bg_color into a single
+        // `color`; WK3 only ever produced solid fills with fg == bg, so
+        // nothing is lost.
         style.fill = Fill {
-            pattern_type: "solid".to_string(),
-            fg_color: Some(palette(back & 0x07).to_string()),
-            bg_color: Some(palette(back & 0x07).to_string()),
+            color: Color::Rgb(palette(back & 0x07).to_string()),
         };
     }
 
