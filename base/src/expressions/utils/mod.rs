@@ -265,10 +265,8 @@ fn name_needs_quoting(name: &str) -> bool {
         return true;
     }
     for (i, char) in name.chars().enumerate() {
-        let allowed = char == '_'
-            || char == '.'
-            || char.is_alphabetic()
-            || (i > 0 && char.is_ascii_digit());
+        let allowed =
+            char == '_' || char == '.' || char.is_alphabetic() || (i > 0 && char.is_ascii_digit());
         if !allowed {
             return true;
         }

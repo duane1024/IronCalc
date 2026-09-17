@@ -546,8 +546,18 @@ fn quoted_sheet_names_with_special_chars() {
     model.add_sheet("SUMM_P&L").unwrap();
     model._set("A1", "='!CAP'!B2");
     model._set("A2", "='SUMM_P&L'!B2");
-    let s1 = model.workbook.get_worksheet_names().iter().position(|n| n == "!CAP").unwrap() as u32;
-    let s2 = model.workbook.get_worksheet_names().iter().position(|n| n == "SUMM_P&L").unwrap() as u32;
+    let s1 = model
+        .workbook
+        .get_worksheet_names()
+        .iter()
+        .position(|n| n == "!CAP")
+        .unwrap() as u32;
+    let s2 = model
+        .workbook
+        .get_worksheet_names()
+        .iter()
+        .position(|n| n == "SUMM_P&L")
+        .unwrap() as u32;
     model.set_user_input(s1, 2, 2, "41".to_string()).unwrap();
     model.set_user_input(s2, 2, 2, "42".to_string()).unwrap();
     model.evaluate();

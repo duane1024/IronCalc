@@ -13,9 +13,15 @@ static RANGE_REFERENCE_REGEX: OnceLock<Regex> = OnceLock::new();
 #[allow(clippy::expect_used)]
 fn get_re() -> &'static Regex {
     RANGE_REFERENCE_REGEX
-        .get_or_init(|| Regex::new(r":[A-Z]*[0-9]*$").expect("Regex is known to be valid"))
+        .get_or_init(|| Regex::new(r":\$?[A-Z]*\$?[0-9]*$").expect("Regex is known to be valid"))
 }
 
+// A defined-name formula is a RANGE (needs implicit intersection in a scalar
+// context) when it ends in `:<col><row>` — with either part optional (whole
+// rows `3:3`, whole columns `A:A`) and either part absolute (`$3:$3`,
+// `$A:$A`, `$A$1:$B$2`), which is how Excel writes every whole-row / whole-
+// column name. Without the `$` allowance a name like `DATA!$744:$744` was
+// left un-intersected and reached a scalar cell as a 16384x1 array.
 fn is_range_reference(s: &str) -> bool {
     get_re().is_match(s)
 }

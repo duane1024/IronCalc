@@ -87,3 +87,49 @@ fn simple_test() {
         assert_eq!(excel_formula, formula);
     }
 }
+
+// A defined name is wrapped in the automatic `@` only when its formula is a
+// RANGE. Excel writes every whole-row / whole-column name with absolute markers
+// (`Sheet1!$3:$3`, `Sheet1!$A:$A`), which the range test used to miss — the
+// `$` before the row number made `:$3` look like no range at all, so the name
+// was exported bare and re-imported as a spilling array.
+#[test]
+fn defined_name_range_shapes_get_implicit_intersection() {
+    let worksheets = vec!["Sheet1".to_string()];
+    let defined_names = vec![
+        ("ABS_ROW".to_string(), None, "Sheet1!$3:$3".to_string()),
+        ("ABS_COL".to_string(), None, "Sheet1!$A:$A".to_string()),
+        (
+            "ABS_BLOCK".to_string(),
+            None,
+            "Sheet1!$A$1:$B$2".to_string(),
+        ),
+        ("REL_ROW".to_string(), None, "Sheet1!3:3".to_string()),
+        ("REL_BLOCK".to_string(), None, "Sheet1!A1:B2".to_string()),
+        ("ONE_CELL".to_string(), None, "Sheet1!$A$1".to_string()),
+        ("ONE_CELL_REL".to_string(), None, "Sheet1!A1".to_string()),
+    ];
+    let mut parser = new_parser(worksheets, defined_names, HashMap::new());
+    let cell_reference = CellReferenceRC {
+        sheet: "Sheet1".to_string(),
+        row: 1,
+        column: 1,
+    };
+    let cases = [
+        ("ABS_ROW", "@ABS_ROW"),
+        ("ABS_COL", "@ABS_COL"),
+        ("ABS_BLOCK", "@ABS_BLOCK"),
+        ("REL_ROW", "@REL_ROW"),
+        ("REL_BLOCK", "@REL_BLOCK"),
+        ("ONE_CELL", "ONE_CELL"),
+        ("ONE_CELL_REL", "ONE_CELL_REL"),
+        ("SIN(ABS_ROW)", "SIN(@ABS_ROW)"),
+        ("SUM(ABS_ROW)", "SUM(ABS_ROW)"),
+    ];
+    for (formula, expected) in cases {
+        let mut t = parser.parse(formula, &cell_reference);
+        add_implicit_intersection(&mut t, true);
+        let r = to_english_localized_string(&t, &cell_reference);
+        assert_eq!(r, expected, "`{formula}`");
+    }
+}

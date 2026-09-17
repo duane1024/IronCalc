@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
 
+use crate::model::Model;
 use crate::test::util::new_empty_model;
+use crate::types::DefinedName;
 
 #[test]
 fn simple_colum() {
@@ -246,4 +248,133 @@ fn columns_of_at_range_intersects() {
     model.evaluate();
 
     assert_eq!(model._get_text("B3"), "1".to_string());
+}
+
+// ---------------------------------------------------------------------------
+// Legacy (file-loaded) scalar formula cells over a range-valued defined name.
+//
+// A whole-row / whole-column defined name (`Sheet1!$3:$3`, `Sheet1!$A:$A` — the
+// absolute shape Excel writes for every such name) referenced from an ORDINARY
+// formula cell of a loaded workbook must be implicitly intersected at that cell,
+// Excel's pre-dynamic-array semantics. The cells are built the way the xlsx
+// importer builds them (a shared-formula index in a plain `Cell::CellFormula`,
+// the name pushed as raw formula text) because `set_user_input` runs static
+// analysis and turns a range-valued formula into a spilling dynamic array — a
+// different, legitimate path that these tests are not about. Before the fix the
+// evaluator turned the range into a 16384x1 array: a `debug_assert!` panic in
+// debug builds, `#VALUE!` in release (Corpay's `DATA!A1227 = =MO_RIS_REV`).
+// ---------------------------------------------------------------------------
+
+fn add_raw_defined_name(model: &mut Model, name: &str, formula: &str) {
+    model.workbook.defined_names.push(DefinedName {
+        name: name.to_string(),
+        formula: formula.to_string(),
+        sheet_id: None,
+    });
+}
+
+/// A plain formula cell exactly as the importer stores it: the formula text
+/// goes into the sheet's shared-formula table and the cell holds its index.
+fn set_file_formula(model: &mut Model, row: i32, column: i32, formula: &str) {
+    let ws = model.workbook.worksheet_mut(0).unwrap();
+    ws.shared_formulas.push(formula.to_string());
+    let index = (ws.shared_formulas.len() - 1) as i32;
+    ws.set_cell_with_formula(row, column, index, 0).unwrap();
+}
+
+#[test]
+fn file_formula_over_absolute_whole_row_name_intersects_in_column_a() {
+    // Column A is the one column where a whole-row array does NOT overflow the
+    // sheet (1 + 16384 - 1 == LAST_COLUMN), so the old code produced the array
+    // rather than #SPILL! — the exact Corpay shape (sheet DATA, A1227).
+    let mut model = new_empty_model();
+    model._set("A3", "10");
+    model._set("B3", "20");
+    add_raw_defined_name(&mut model, "MO_RIS_REV", "Sheet1!$3:$3");
+    set_file_formula(&mut model, 5, 1, "MO_RIS_REV");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("A5"), "10".to_string());
+}
+
+#[test]
+fn file_formula_over_absolute_whole_row_name_intersects_elsewhere() {
+    let mut model = new_empty_model();
+    model._set("A3", "10");
+    model._set("B3", "20");
+    model._set("C3", "30");
+    add_raw_defined_name(&mut model, "ROW_THREE", "Sheet1!$3:$3");
+    set_file_formula(&mut model, 5, 2, "ROW_THREE");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("B5"), "20".to_string());
+}
+
+#[test]
+fn file_formula_over_absolute_whole_column_name_intersects() {
+    let mut model = new_empty_model();
+    model._set("A1", "1");
+    model._set("A2", "2");
+    model._set("A3", "3");
+    add_raw_defined_name(&mut model, "COL_A", "Sheet1!$A:$A");
+    set_file_formula(&mut model, 2, 3, "COL_A");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("C2"), "2".to_string());
+}
+
+#[test]
+fn file_formula_over_absolute_block_name_intersects() {
+    let mut model = new_empty_model();
+    model._set("A1", "1");
+    model._set("A2", "2");
+    model._set("A3", "3");
+    add_raw_defined_name(&mut model, "BLOCK", "Sheet1!$A$1:$A$3");
+    set_file_formula(&mut model, 2, 3, "BLOCK");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("C2"), "2".to_string());
+}
+
+#[test]
+fn file_formula_over_range_name_with_no_intersection_is_value_error() {
+    // The formula sits in row 5; a block in rows 1..3 of another column has no
+    // cell in the formula's row or column — Excel shows #VALUE! there too.
+    let mut model = new_empty_model();
+    model._set("A1", "1");
+    model._set("A2", "2");
+    add_raw_defined_name(&mut model, "BLOCK", "Sheet1!$A$1:$A$3");
+    set_file_formula(&mut model, 5, 3, "BLOCK");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("C5"), "#VALUE!".to_string());
+}
+
+#[test]
+fn file_formula_over_single_cell_name_is_the_cell() {
+    let mut model = new_empty_model();
+    model._set("A1", "7");
+    add_raw_defined_name(&mut model, "ONE", "Sheet1!$A$1");
+    set_file_formula(&mut model, 2, 3, "ONE");
+    model.reset_parsed_structures();
+
+    assert_eq!(model._get_text("C2"), "7".to_string());
+}
+
+#[test]
+fn typed_formula_over_range_name_still_spills() {
+    // The dynamic-array path is untouched: a name TYPED into a cell goes
+    // through static analysis (Unknown -> dynamic) and spills.
+    let mut model = new_empty_model();
+    model._set("A1", "1");
+    model._set("A2", "2");
+    model._set("A3", "3");
+    add_raw_defined_name(&mut model, "BLOCK", "Sheet1!$A$1:$A$3");
+    model.reset_parsed_structures();
+    model._set("C1", "=BLOCK");
+    model.evaluate();
+
+    assert_eq!(model._get_text("C1"), "1".to_string());
+    assert_eq!(model._get_text("C2"), "2".to_string());
+    assert_eq!(model._get_text("C3"), "3".to_string());
 }

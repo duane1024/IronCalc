@@ -1125,13 +1125,10 @@ impl<'a> Model<'a> {
                         // them to a single value before they reach the cell. If we
                         // ever get here, static analysis or implicit-intersection
                         // insertion has regressed.
-                        debug_assert!(
-                            false,
-                            "Larger-than-1x1 array reached scalar-context cell \
-                             (sheet={sheet}, row={row}, column={column}, \
-                             {array_width}x{array_height}); implicit intersection \
-                             was expected to collapse it.",
-                        );
+                        // Not asserted: a book in the wild CAN reach this (a whole-row defined
+                        // name in a plain formula cell did, before `evaluate_cell` intersected
+                        // such a range), and a debug build serving that book must answer
+                        // #VALUE! for the cell — never take the process down.
                         FormulaValue::Error {
                             ei: Error::VALUE,
                             o: "".to_string(),
@@ -1586,6 +1583,20 @@ impl<'a> Model<'a> {
                     {
                         // it is a single cell range, we can just return the value of the cell
                         self.evaluate_cell(left)
+                    } else if !matches!(original_cell, Cell::ArrayFormula { .. }) {
+                        // A plain (legacy, non-array) formula cell whose whole
+                        // result is a multi-cell range: Excel's pre-dynamic-array
+                        // semantics apply, i.e. implicit intersection at the
+                        // formula's own cell. This is every `=NAME` a file stores
+                        // in an ordinary cell where NAME is a whole row or column
+                        // (`DATA!$744:$744`): the static analysis that marks a
+                        // typed formula dynamic never ran on it, so it must not
+                        // become an array here — a 16384-wide array in a scalar
+                        // cell is a #VALUE! at best.
+                        self.implicit_intersection_to_value(
+                            CalcResult::Range { left, right },
+                            cell_reference,
+                        )
                     } else {
                         let array_height = right.row - left.row + 1;
                         let array_width = right.column - left.column + 1;
@@ -1647,12 +1658,10 @@ impl<'a> Model<'a> {
                             // insertion has regressed. Mirrors the assertion in
                             // `set_cells_with_result` so that the cell value and the
                             // value observed by in-pass dependents stay consistent.
-                            debug_assert!(
-                                false,
-                                "Larger-than-1x1 array reached scalar-context cell \
-                                 ({cell_reference:?}, {array_width}x{array_height}); \
-                                 implicit intersection was expected to collapse it.",
-                            );
+                            // Not asserted: a book in the wild CAN reach this (a whole-row defined
+                            // name in a plain formula cell did, before `evaluate_cell` intersected
+                            // such a range), and a debug build serving that book must answer
+                            // #VALUE! for the cell — never take the process down.
                             CalcResult::new_error(
                                 Error::VALUE,
                                 cell_reference,
