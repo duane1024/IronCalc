@@ -1,12 +1,14 @@
 mod conditional_formatting;
 mod metadata;
 pub(crate) mod shared_strings;
+mod sheet_data;
 mod styles;
 mod tables;
 mod theme;
 mod util;
 mod workbook;
 mod worksheets;
+mod xml;
 
 use std::{
     collections::HashMap,
@@ -14,7 +16,7 @@ use std::{
     io::{BufReader, Cursor, Read},
 };
 
-use roxmltree::Node;
+use xml::XmlNode;
 
 use ironcalc_base::{
     expressions::{
@@ -38,21 +40,19 @@ use worksheets::{load_sheets, Relationship};
 fn load_relationships<R: Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
 ) -> Result<HashMap<String, Relationship>, XlsxError> {
-    let mut file = archive.by_name("xl/_rels/workbook.xml.rels")?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    let doc = roxmltree::Document::parse(&text)?;
-    let nodes: Vec<Node> = doc
+    let file = archive.by_name("xl/_rels/workbook.xml.rels")?;
+    let doc = XmlNode::parse(BufReader::new(file))?;
+    let nodes: Vec<&XmlNode> = doc
         .descendants()
         .filter(|n| n.has_tag_name("Relationship"))
         .collect();
     let mut rels = HashMap::new();
     for node in nodes {
         rels.insert(
-            get_attribute(&node, "Id")?.to_string(),
+            get_attribute(node, "Id")?.to_string(),
             Relationship {
-                rel_type: get_attribute(&node, "Type")?.to_string(),
-                target: get_attribute(&node, "Target")?.to_string(),
+                rel_type: get_attribute(node, "Type")?.to_string(),
+                target: get_attribute(node, "Target")?.to_string(),
             },
         );
     }
