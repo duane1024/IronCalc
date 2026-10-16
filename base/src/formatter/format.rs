@@ -39,6 +39,31 @@ fn get_fract_part(value: f64, precision: i32, int_len: usize) -> Vec<char> {
     b[2..last_non_zero].to_vec()
 }
 
+/// Rounds `value` to `decimals` places after the decimal point, half away from zero,
+/// as Excel displays a number. Float noise is cleaned at 15 significant digits first
+/// (1.005 is 1.005, not 1.00499...), so a tie rounds the way the decimal reads.
+/// Rounding by SIGNIFICANT digits instead (precision + the integer part's length) counted
+/// the "0" of a value below 1 as a digit, so 0.98 kept two digits and was shown "0.0"
+/// at one decimal; Excel shows "1.0".
+fn round_to_decimals(value: f64, decimals: i32) -> f64 {
+    let clean = to_precision(value, 15);
+    let scale = 10.0_f64.powi(decimals);
+    let scaled = to_precision(clean.abs() * scale, 15);
+    if !scaled.is_finite() || scaled >= 1e15 {
+        // Past 15 significant digits there is nothing left to round: keep the old rule.
+        return to_precision(
+            value,
+            (decimals.max(0) as usize) + format!("{}", value.abs().floor()).len(),
+        );
+    }
+    let rounded = scaled.round() / scale;
+    if clean < 0.0 {
+        -rounded
+    } else {
+        rounded
+    }
+}
+
 /// Return true if we need to add a separator in position digit_index
 /// It normally happens if if digit_index -1 is 3, 6, 9,... digit_index ≡ 1 mod 3
 fn use_group_separator(use_thousands: bool, digit_index: i32, group_sizes: &str) -> bool {
@@ -434,11 +459,15 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             }
             let tokens = &p.tokens;
             value = value * 100.0_f64.powi(p.percent) / (1000.0_f64.powi(p.comma));
-            // p.precision is the number of significant digits _after_ the decimal point
-            value = to_precision(
-                value,
-                (p.precision as usize) + format!("{}", value.abs().floor()).len(),
-            );
+            // p.precision is the number of digits _after_ the decimal point
+            value = if p.is_scientific {
+                to_precision(
+                    value,
+                    (p.precision as usize) + format!("{}", value.abs().floor()).len(),
+                )
+            } else {
+                round_to_decimals(value, p.precision)
+            };
             let mut value_abs = value.abs();
             let mut exponent_part: Vec<char> = vec![];
             let mut exponent_is_negative = value_abs < 10.0;
@@ -477,8 +506,11 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             let group_sizes = locale.numbers.decimal_formats.standard.to_owned();
             let group_separator = symbols.group.to_owned();
             let decimal_separator = symbols.decimal.to_owned();
-            // There probably are better ways to check if a number at a given precision is negative :/
-            let is_negative = value < -(10.0_f64.powf(-(p.precision as f64)));
+            // Negative only when a digit it shows is nonzero: -0.98 at "0" is "-1", -0.004 at
+            // "0.00" is "0.00". (The old `value < -10^-precision` test dropped the sign of a
+            // value that rounds to exactly -10^-precision, e.g. -0.98 -> "1".)
+            let is_negative = value < 0.0
+                && (int_number != 0.0 || fract_part.iter().any(|c| c.is_ascii_digit() && *c != '0'));
             let mut needs_period = false;
 
             for token in tokens {
