@@ -101,7 +101,6 @@ fn weekday_number(date: chrono::NaiveDate, return_type: i32) -> Result<f64, Erro
             let zero_based = weekday.number_from_monday() - 1; // 0..6, Monday = 0
             ((zero_based + 7 - start) % 7) + 1
         }
-        0 => return Err(Error::VALUE),
         _ => return Err(Error::NUM),
     };
     Ok(num as f64)
@@ -125,6 +124,13 @@ fn is_feb29_between_consecutive_years(start: chrono::NaiveDate, end: chrono::Nai
     } else {
         false
     }
+}
+
+// The time of day of a serial in whole seconds, after rounding it to the
+// nearest millisecond (0..=86399; a time that rounds up to midnight is 0).
+fn seconds_of_day(v: f64) -> i64 {
+    let ms = (v.rem_euclid(1.0) * SECONDS_PER_DAY_F64 * 1000.0).round() as i64;
+    (ms % (SECONDS_PER_DAY as i64 * 1000)) / 1000
 }
 
 // ---------------------------------------------------------------------------
@@ -180,14 +186,14 @@ macro_rules! time_part_fn {
     };
 }
 
-use crate::arithmetic::bcast_idx;
+use crate::arithmetic::{array_of_errors, bcast_idx};
+use crate::cast::NumberOrArray;
 use crate::constants::MAXIMUM_DATE_SERIAL_NUMBER;
 use crate::constants::MINIMUM_DATE_SERIAL_NUMBER;
 use crate::expressions::types::CellReferenceIndex;
 use crate::formatter::dates::date_to_serial_number;
 use crate::formatter::dates::permissive_date_to_serial_number;
 use crate::formatter::dates::DATE_OUT_OF_RANGE_MESSAGE;
-use crate::number_format::to_precision;
 use crate::{
     calc_result::CalcResult,
     constants::EXCEL_DATE_BASE,
@@ -259,14 +265,19 @@ impl WeekendPattern {
     }
 }
 
-fn parse_time_string(text: &str) -> Option<f64> {
-    let text = text.trim();
+// Fraction of a day for a parsed time. The sub-second part is kept, so that
+// TIMEVALUE("4:35:00.5") returns the same value as Excel instead of
+// truncating to the whole second.
+fn time_to_fraction(time: NaiveTime) -> f64 {
+    let seconds = time.num_seconds_from_midnight() as f64 + time.nanosecond() as f64 / 1e9;
+    seconds / SECONDS_PER_DAY_F64
+}
 
-    // First, try custom parsing for edge cases like "24:00:00", "23:60:00", "23:59:60"
-    // that need normalization to match Excel behavior
-    if let Some(time_fraction) = parse_time_with_normalization(text) {
-        return Some(time_fraction);
-    }
+/// The fraction of the day of a text that is a time and nothing else:
+/// "12:00", "6:35:10", "3:30 PM", "5 pm". This is the text that counts as a
+/// number when one is expected: `="12:00"+0` is 0.5.
+pub(crate) fn parse_time_of_day(text: &str) -> Option<f64> {
+    let text = text.trim();
 
     // First, try manual parsing for simple "N PM" / "N AM" format (case-insensitive)
     if let Some((hour_str, is_pm)) = parse_simple_am_pm(text) {
@@ -284,48 +295,112 @@ fn parse_time_string(text: &str) -> Option<f64> {
                     hour
                 };
                 let time = NaiveTime::from_hms_opt(hour_24, 0, 0)?;
-                return Some(time.num_seconds_from_midnight() as f64 / SECONDS_PER_DAY_F64);
+                return Some(time_to_fraction(time));
             }
         }
     }
 
-    // Standard patterns
-    let patterns_time = ["%H:%M:%S", "%H:%M", "%I:%M %p", "%I %p", "%I:%M:%S %p"];
+    // Standard patterns. `%.f` makes the fractional part of the seconds
+    // optional and consumes it when present, so each `%S` pattern is paired
+    // with a `%.f` variant rather than being replaced.
+    let patterns_time = [
+        "%H:%M:%S%.f",
+        "%H:%M:%S",
+        "%H:%M",
+        "%I:%M %p",
+        "%I %p",
+        "%I:%M:%S%.f %p",
+        "%I:%M:%S %p",
+    ];
     for p in patterns_time {
         if let Ok(t) = NaiveTime::parse_from_str(text, p) {
-            return Some(t.num_seconds_from_midnight() as f64 / SECONDS_PER_DAY_F64);
+            return Some(time_to_fraction(t));
         }
+    }
+    None
+}
+
+/// Removes the whitespace directly before and after any of the `separators`
+/// and keeps every other space, like Excel does: "2026 - 01 - 01 12:00"
+/// becomes "2026-01-01 12:00" and "3 : 30 PM" becomes "3:30 PM".
+/// Each whitespace run is decided once, when the next non-whitespace character
+/// is reached, so the cost is linear in the length of the text.
+fn squeeze_separator_spaces(text: &str, separators: &[char]) -> String {
+    let mut result = String::with_capacity(text.len());
+    // Byte offset in `text` where the current whitespace run started
+    let mut run_start: Option<usize> = None;
+    for (idx, c) in text.char_indices() {
+        if c.is_ascii_whitespace() {
+            run_start.get_or_insert(idx);
+            continue;
+        }
+        if let Some(start) = run_start.take() {
+            let after_separator = result.ends_with(separators);
+            if !after_separator && !separators.contains(&c) {
+                result.push_str(&text[start..idx]);
+            }
+        }
+        result.push(c);
+    }
+    if let Some(start) = run_start {
+        if !result.ends_with(separators) {
+            result.push_str(&text[start..]);
+        }
+    }
+    result
+}
+
+fn parse_time_string(text: &str) -> Option<f64> {
+    let text = squeeze_separator_spaces(text.trim(), &[':']);
+    let text = text.as_str();
+
+    // First, try custom parsing for edge cases like "24:00:00", "23:60:00", "23:59:60"
+    // that need normalization to match Excel behavior
+    if let Some(time_fraction) = parse_time_with_normalization(text) {
+        return Some(time_fraction);
+    }
+
+    if let Some(time_fraction) = parse_time_of_day(text) {
+        return Some(time_fraction);
     }
 
     let patterns_dt = [
         // ISO formats
+        "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%dT%H:%M",
         // Excel-style date formats with AM/PM
-        "%d-%b-%Y %I:%M:%S %p", // "22-Aug-2011 6:35:00 AM"
-        "%d-%b-%Y %I:%M %p",    // "22-Aug-2011 6:35 AM"
-        "%d-%b-%Y %H:%M:%S",    // "22-Aug-2011 06:35:00"
-        "%d-%b-%Y %H:%M",       // "22-Aug-2011 06:35"
+        "%d-%b-%Y %I:%M:%S%.f %p", // "22-Aug-2011 6:35:00.5 AM"
+        "%d-%b-%Y %I:%M:%S %p",    // "22-Aug-2011 6:35:00 AM"
+        "%d-%b-%Y %I:%M %p",       // "22-Aug-2011 6:35 AM"
+        "%d-%b-%Y %H:%M:%S%.f",    // "22-Aug-2011 06:35:00.5"
+        "%d-%b-%Y %H:%M:%S",       // "22-Aug-2011 06:35:00"
+        "%d-%b-%Y %H:%M",          // "22-Aug-2011 06:35"
         // US date formats with AM/PM
-        "%m/%d/%Y %I:%M:%S %p", // "8/22/2011 6:35:00 AM"
-        "%m/%d/%Y %I:%M %p",    // "8/22/2011 6:35 AM"
-        "%m/%d/%Y %H:%M:%S",    // "8/22/2011 06:35:00"
-        "%m/%d/%Y %H:%M",       // "8/22/2011 06:35"
+        "%m/%d/%Y %I:%M:%S%.f %p", // "8/22/2011 6:35:00.5 AM"
+        "%m/%d/%Y %I:%M:%S %p",    // "8/22/2011 6:35:00 AM"
+        "%m/%d/%Y %I:%M %p",       // "8/22/2011 6:35 AM"
+        "%m/%d/%Y %H:%M:%S%.f",    // "8/22/2011 06:35:00.5"
+        "%m/%d/%Y %H:%M:%S",       // "8/22/2011 06:35:00"
+        "%m/%d/%Y %H:%M",          // "8/22/2011 06:35"
         // European date formats with AM/PM
-        "%d/%m/%Y %I:%M:%S %p", // "22/8/2011 6:35:00 AM"
-        "%d/%m/%Y %I:%M %p",    // "22/8/2011 6:35 AM"
-        "%d/%m/%Y %H:%M:%S",    // "22/8/2011 06:35:00"
-        "%d/%m/%Y %H:%M",       // "22/8/2011 06:35"
+        "%d/%m/%Y %I:%M:%S%.f %p", // "22/8/2011 6:35:00.5 AM"
+        "%d/%m/%Y %I:%M:%S %p",    // "22/8/2011 6:35:00 AM"
+        "%d/%m/%Y %I:%M %p",       // "22/8/2011 6:35 AM"
+        "%d/%m/%Y %H:%M:%S%.f",    // "22/8/2011 06:35:00.5"
+        "%d/%m/%Y %H:%M:%S",       // "22/8/2011 06:35:00"
+        "%d/%m/%Y %H:%M",          // "22/8/2011 06:35"
     ];
     for p in patterns_dt {
         if let Ok(dt) = NaiveDateTime::parse_from_str(text, p) {
-            return Some(dt.time().num_seconds_from_midnight() as f64 / SECONDS_PER_DAY_F64);
+            return Some(time_to_fraction(dt.time()));
         }
     }
     if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
-        return Some(dt.time().num_seconds_from_midnight() as f64 / SECONDS_PER_DAY_F64);
+        return Some(time_to_fraction(dt.time()));
     }
     None
 }
@@ -504,15 +579,47 @@ fn parse_year_simple(year_str: &str) -> Result<i32, String> {
     }
 }
 
+// Returns the whole days in a "H:M", "H:M:S" or "H:M:S.f" time part, so that
+// "24:00:00" rolls a date over to the next day like Excel does. Anything else is 0.
+fn whole_days_in_time(time: &str) -> i32 {
+    let time = squeeze_separator_spaces(time.trim(), &[':']);
+    let parts: Vec<&str> = time.split(':').collect();
+    if parts.len() < 2 || parts.len() > 3 {
+        return 0;
+    }
+    let is_integer = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    if !is_integer(parts[0]) || !is_integer(parts[1]) {
+        return 0;
+    }
+    let (Ok(hours), Ok(minutes)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) else {
+        return 0;
+    };
+    let seconds = match parts.get(2) {
+        Some(s) => match s.parse::<f64>() {
+            Ok(v) if v >= 0.0 && s.chars().all(|c| c.is_ascii_digit() || c == '.') => v,
+            _ => return 0,
+        },
+        None => 0.0,
+    };
+    let total_seconds = hours * 3600.0 + minutes * 60.0 + seconds;
+    (total_seconds / 86400.0).floor().min(i32::MAX as f64) as i32
+}
+
 pub(crate) fn parse_datevalue_text(value: &str) -> Result<i32, String> {
-    // Trim whitespace and discard any time component (e.g., "2024-02-29 06:00" -> "2024-02-29")
-    let mut date_str = value.trim();
+    // Trim whitespace and split off any time component (e.g., "2024-02-29 06:00" -> "2024-02-29").
+    // The time component only counts through its whole days (e.g., "24:00:00" is the next day).
+    let squeezed = squeeze_separator_spaces(value.trim(), &['/', '-']);
+    let mut date_str = squeezed.as_str();
+    let mut time_str = "";
     if let Some(idx) = date_str.find('T') {
+        time_str = &date_str[idx + 1..];
         date_str = &date_str[..idx];
     }
     if let Some(idx) = date_str.find(' ') {
+        time_str = &date_str[idx + 1..];
         date_str = &date_str[..idx];
     }
+    let extra_days = whole_days_in_time(time_str);
 
     let separator = if date_str.contains('/') {
         '/'
@@ -578,6 +685,7 @@ pub(crate) fn parse_datevalue_text(value: &str) -> Result<i32, String> {
 
     match date_to_serial_number(day, month, year) {
         Ok(n) => {
+            let n = n.saturating_add(extra_days);
             if !(MINIMUM_DATE_SERIAL_NUMBER..=MAXIMUM_DATE_SERIAL_NUMBER).contains(&n) {
                 Err("Not a valid date".to_string())
             } else {
@@ -668,6 +776,15 @@ impl<'a> Model<'a> {
         let months = match self.get_number_no_bools(&args[1], cell) {
             Ok(c) => {
                 let t = c.trunc();
+                // Reject months that cannot be represented as i32 — Excel returns #NUM!
+                // for these, and casting would saturate then panic in chrono's Add<Months>.
+                if !t.is_finite() || t > i32::MAX as f64 || t < i32::MIN as f64 {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: "EOMONTH out of bounds".to_string(),
+                    };
+                }
                 t as i32
             }
             Err(s) => return s,
@@ -676,9 +793,19 @@ impl<'a> Model<'a> {
         let months_abs = months.unsigned_abs();
 
         let native_date = if months > 0 {
-            date + Months::new(months_abs)
+            date.checked_add_months(Months::new(months_abs))
         } else {
-            date - Months::new(months_abs)
+            date.checked_sub_months(Months::new(months_abs))
+        };
+        let native_date = match native_date {
+            Some(d) => d,
+            None => {
+                return CalcResult::Error {
+                    error: Error::NUM,
+                    origin: cell,
+                    message: "EOMONTH out of bounds".to_string(),
+                };
+            }
         };
 
         // Instead of calculating the end of month we compute the first day of the following month
@@ -690,7 +817,17 @@ impl<'a> Model<'a> {
             year += 1;
         }
         match date_to_serial_number(1, month, year) {
-            Ok(serial_number) => CalcResult::Number(serial_number as f64 - 1.0),
+            Ok(serial_number) => {
+                let end = serial_number - 1;
+                if !(MINIMUM_DATE_SERIAL_NUMBER..=MAXIMUM_DATE_SERIAL_NUMBER).contains(&end) {
+                    return CalcResult::Error {
+                        error: Error::NUM,
+                        origin: cell,
+                        message: "EOMONTH out of bounds".to_string(),
+                    };
+                }
+                CalcResult::Number(end as f64)
+            }
             Err(message) => CalcResult::Error {
                 error: Error::NUM,
                 origin: cell,
@@ -704,17 +841,29 @@ impl<'a> Model<'a> {
         if args.len() != 3 {
             return CalcResult::new_args_number_error(cell);
         }
-        use crate::cast::NumberOrArray;
-
-        let year_na = match self.get_number_or_array(&args[0], cell) {
+        let year_na = self.get_number_or_array(&args[0], cell);
+        let month_na = self.get_number_or_array(&args[1], cell);
+        let day_na = self.get_number_or_array(&args[2], cell);
+        // An argument that is an error is the result, unless another one is
+        // an array: then it is broadcast and every element is an error.
+        let any_array = [&year_na, &month_na, &day_na]
+            .iter()
+            .any(|na| matches!(na, Ok(NumberOrArray::Array(_))));
+        let broadcast_error = |na: Result<NumberOrArray, CalcResult>| match na {
+            Err(CalcResult::Error { error, .. }) if any_array => {
+                Ok(NumberOrArray::Array(vec![vec![ArrayNode::Error(error)]]))
+            }
+            other => other,
+        };
+        let year_na = match broadcast_error(year_na) {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let month_na = match self.get_number_or_array(&args[1], cell) {
+        let month_na = match broadcast_error(month_na) {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let day_na = match self.get_number_or_array(&args[2], cell) {
+        let day_na = match broadcast_error(day_na) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -1259,14 +1408,11 @@ impl<'a> Model<'a> {
     // -----------------------------------------------------------------------
 
     time_part_fn!(fn_hour, |v: f64| (v.rem_euclid(1.0) * 24.0).floor());
-    time_part_fn!(fn_minute, |v: f64| {
-        let total_seconds = (v.rem_euclid(1.0) * SECONDS_PER_DAY_F64).floor();
-        ((total_seconds / 60.0) as i64 % 60) as f64
-    });
-    time_part_fn!(fn_second, |v: f64| {
-        let total_seconds = to_precision(v.rem_euclid(1.0) * SECONDS_PER_DAY_F64, 15).floor();
-        (total_seconds as i64 % 60) as f64
-    });
+    // MINUTE and SECOND round the time of day to the nearest millisecond
+    // before taking it apart, as Excel does: MINUTE(0.520833333) is 30
+    // (12:29:59.99997 is 12:30:00.000), SECOND(TIME(14,30,45.999)) stays 45.
+    time_part_fn!(fn_minute, |v: f64| ((seconds_of_day(v) / 60) % 60) as f64);
+    time_part_fn!(fn_second, |v: f64| (seconds_of_day(v) % 60) as f64);
 
     pub(crate) fn fn_timevalue(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() != 1 {
@@ -1532,16 +1678,38 @@ impl<'a> Model<'a> {
         if !(1..=2).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
+        // Excel evaluates the date argument before `return_type`, so an invalid
+        // date yields its error even when `return_type` is #DIV/0! or #N/A (#1502).
+        let dates = match self.get_number_or_array(&args[0], cell) {
+            Ok(v) => v,
+            Err(first) => return first,
+        };
         let return_type = if args.len() == 2 {
             match self.get_number(&args[1], cell) {
                 Ok(f) => f as i32,
-                Err(s) => return s,
+                Err(error) => {
+                    // The error goes to every element if the dates are an
+                    // array; the ones that are an error keep theirs.
+                    return match dates {
+                        NumberOrArray::Array(array) => {
+                            array_of_errors(&array, error, |node| match node {
+                                ArrayNode::Error(error) => Some(error.clone()),
+                                ArrayNode::String(s) if self.cast_number(s).is_none() => {
+                                    Some(Error::VALUE)
+                                }
+                                _ => None,
+                            })
+                        }
+                        NumberOrArray::Number(_) => error,
+                    };
+                }
             }
         } else {
             1
         };
-        // Broadcasts element-wise over a range/array date argument.
-        self.apply_number_unary(&args[0], cell, move |serial| {
+        // Broadcasts element-wise over a range/array date argument. `dates` was
+        // already evaluated above, so we reuse it instead of re-evaluating the node.
+        self.apply_number_unary_value(dates, cell, move |serial| {
             let date = from_excel_date(serial.floor() as i64).map_err(|_| Error::NUM)?;
             weekday_number(date, return_type)
         })
@@ -1551,7 +1719,7 @@ impl<'a> Model<'a> {
         if !(1..=2).contains(&args.len()) {
             return CalcResult::new_args_number_error(cell);
         }
-        let serial = match self.get_number(&args[0], cell) {
+        let serial = match self.get_number_no_bools(&args[0], cell) {
             Ok(c) => c.floor() as i64,
             Err(s) => return s,
         };
@@ -1560,7 +1728,7 @@ impl<'a> Model<'a> {
             Err(e) => return e,
         };
         let return_type = if args.len() == 2 {
-            match self.get_number(&args[1], cell) {
+            match self.get_number_no_bools(&args[1], cell) {
                 Ok(f) => f as i32,
                 Err(s) => return s,
             }
@@ -1580,9 +1748,6 @@ impl<'a> Model<'a> {
             15 => chrono::Weekday::Fri,
             16 => chrono::Weekday::Sat,
             17 => chrono::Weekday::Sun,
-            x if x <= 0 || x == 3 => {
-                return CalcResult::new_error(Error::VALUE, cell, "Invalid return_type".to_string())
-            }
             _ => return CalcResult::new_error(Error::NUM, cell, "Invalid return_type".to_string()),
         };
         let mut first = match chrono::NaiveDate::from_ymd_opt(date.year(), 1, 1) {

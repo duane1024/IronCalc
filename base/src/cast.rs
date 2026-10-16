@@ -1,3 +1,5 @@
+use crate::functions::date_and_time::parse_time_of_day;
+use crate::number_format::parse_finite_number;
 use crate::{
     calc_result::{CalcResult, Range},
     expressions::{
@@ -57,9 +59,9 @@ pub(crate) fn array_node_to_string(node: &ArrayNode) -> Result<String, Error> {
 
 impl<'a> Model<'a> {
     pub(crate) fn cast_number(&self, s: &str) -> Option<f64> {
-        match s.trim().parse::<f64>() {
-            Ok(f) => Some(f),
-            _ => {
+        match parse_finite_number(s.trim()) {
+            Some(f) => Some(f),
+            None => {
                 let currency = &self.locale.currency.symbol;
                 let mut currencies = vec!["$", "€"];
                 if !currencies.iter().any(|e| *e == currency) {
@@ -70,7 +72,8 @@ impl<'a> Model<'a> {
                 {
                     return Some(v);
                 }
-                None
+                // Or as a time of the day ("12:00", "3:30 PM")
+                parse_time_of_day(s)
             }
         }
     }
@@ -196,11 +199,26 @@ impl<'a> Model<'a> {
         op: impl Fn(f64) -> Result<f64, Error>,
     ) -> CalcResult {
         match self.get_number_or_array(node, cell) {
-            Ok(NumberOrArray::Number(f)) => match op(f) {
+            Ok(value) => self.apply_number_unary_value(value, cell, op),
+            Err(e) => e,
+        }
+    }
+
+    /// [`Self::apply_number_unary`] over an already evaluated argument, so a caller
+    /// that had to inspect the value (e.g. WEEKDAY checks the date before reading
+    /// `return_type`) does not pay for evaluating the node twice.
+    pub(crate) fn apply_number_unary_value(
+        &mut self,
+        value: NumberOrArray,
+        cell: CellReferenceIndex,
+        op: impl Fn(f64) -> Result<f64, Error>,
+    ) -> CalcResult {
+        match value {
+            NumberOrArray::Number(f) => match op(f) {
                 Ok(x) => CalcResult::Number(x),
                 Err(e) => CalcResult::new_error(e, cell, String::new()),
             },
-            Ok(NumberOrArray::Array(a)) => {
+            NumberOrArray::Array(a) => {
                 let mut array = Vec::with_capacity(a.len());
                 for row in a {
                     let mut data_row = Vec::with_capacity(row.len());
@@ -228,7 +246,6 @@ impl<'a> Model<'a> {
                 }
                 CalcResult::Array(array)
             }
-            Err(e) => e,
         }
     }
 
@@ -241,11 +258,40 @@ impl<'a> Model<'a> {
         self.cast_to_number(result, cell)
     }
 
+    /// A reference where a value is expected (typically returned by INDIRECT,
+    /// OFFSET or INDEX inside a scalar argument) is dereferenced: a single cell
+    /// gives its value, a larger range is intersected with the row or column of
+    /// `cell`, as Excel does in a scalar context. Literal ranges never get here:
+    /// static analysis wraps them in `@` at parse time.
+    ///
+    /// A 1x1 array (the result of arithmetic on such a reference, for instance
+    /// `INDIRECT("C3")*1`) is a scalar wrapped in an array and unwraps likewise.
+    fn dereference(&mut self, result: CalcResult, cell: CellReferenceIndex) -> CalcResult {
+        match result {
+            CalcResult::Range { .. } => self.implicit_intersection_to_value(result, cell),
+            CalcResult::Array(ref array) if array.len() == 1 && array[0].len() == 1 => {
+                match &array[0][0] {
+                    ArrayNode::Number(n) => CalcResult::Number(*n),
+                    ArrayNode::Boolean(b) => CalcResult::Boolean(*b),
+                    ArrayNode::String(s) => CalcResult::String(s.clone()),
+                    ArrayNode::Error(error) => CalcResult::new_error(
+                        error.clone(),
+                        cell,
+                        error.to_localized_error_string(self.language),
+                    ),
+                    ArrayNode::Empty => CalcResult::EmptyCell,
+                }
+            }
+            other => other,
+        }
+    }
+
     pub(crate) fn cast_to_number(
         &mut self,
         result: CalcResult,
         cell: CellReferenceIndex,
     ) -> Result<f64, CalcResult> {
+        let result = self.dereference(result, cell);
         match result {
             CalcResult::Number(f) => Ok(f),
             CalcResult::String(s) => match self.cast_number(&s) {
@@ -284,6 +330,7 @@ impl<'a> Model<'a> {
         cell: CellReferenceIndex,
     ) -> Result<f64, CalcResult> {
         let result = self.evaluate_node_in_context(node, cell);
+        let result = self.dereference(result, cell);
         if matches!(result, CalcResult::Boolean(_)) {
             return Err(CalcResult::new_error(
                 Error::VALUE,
@@ -310,6 +357,7 @@ impl<'a> Model<'a> {
     ) -> Result<String, CalcResult> {
         // FIXME: I think when casting a number we should convert it to_precision(x, 15)
         // See function Exact
+        let result = self.dereference(result, cell);
         match result {
             CalcResult::Number(f) => Ok(format!("{f}")),
             CalcResult::String(s) => Ok(s),
@@ -349,6 +397,7 @@ impl<'a> Model<'a> {
         result: CalcResult,
         cell: CellReferenceIndex,
     ) -> Result<bool, CalcResult> {
+        let result = self.dereference(result, cell);
         match result {
             CalcResult::Number(f) => {
                 if f == 0.0 {

@@ -1,8 +1,10 @@
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 use pyo3::{create_exception, wrap_pyfunction};
 use serde::Serialize;
 
+use xlsx::base::cell::CellValue;
 use xlsx::base::expressions::types::Area;
 use xlsx::base::expressions::utils::{
     column_to_number, number_to_column, quote_name as quote_name_ic,
@@ -36,6 +38,16 @@ pub(crate) fn to_python<'py, T: Serialize>(
 /// Converts a Python object (dicts, lists, ...) into a serde-deserializable value
 pub(crate) fn from_python<T: serde::de::DeserializeOwned>(obj: &Bound<'_, PyAny>) -> PyResult<T> {
     pythonize::depythonize(obj).map_err(to_py_err)
+}
+
+/// Converts a `CellValue` into a native Python object (None, str, float, or bool)
+pub(crate) fn cell_value_to_py(py: Python<'_>, value: CellValue) -> PyResult<Py<PyAny>> {
+    match value {
+        CellValue::None => Ok(py.None()),
+        CellValue::String(s) => s.into_py_any(py),
+        CellValue::Number(f) => f.into_py_any(py),
+        CellValue::Boolean(b) => b.into_py_any(py),
+    }
 }
 
 /// Converts a Python value into a `Color`:
@@ -140,6 +152,20 @@ pub fn get_all_timezones() -> Vec<String> {
 #[pyfunction]
 pub fn get_supported_locales() -> Vec<String> {
     xlsx::base::get_supported_locales()
+}
+
+/// Returns the list of built-in themes (the same shape as `get_theme`/`set_theme`)
+#[pyfunction]
+pub fn get_theme_list(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+    to_python(py, &xlsx::base::themes::builtin_themes())
+}
+
+/// Applies a tint (-1.0 darkest to 1.0 lightest) to a "#RRGGBB" color,
+/// returning the resulting "#RRGGBB" color. This is how theme colors
+/// `[theme, tint]` are resolved.
+#[pyfunction]
+pub fn hex_with_tint_to_rgb(hex: &str, tint: f64) -> String {
+    xlsx::base::colors::hex_with_tint_to_rgb(hex, tint)
 }
 
 // Create methods for the raw API
@@ -280,6 +306,8 @@ fn _ironcalc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(quote_name, m)?)?;
     m.add_function(wrap_pyfunction!(get_all_timezones, m)?)?;
     m.add_function(wrap_pyfunction!(get_supported_locales, m)?)?;
+    m.add_function(wrap_pyfunction!(get_theme_list, m)?)?;
+    m.add_function(wrap_pyfunction!(hex_with_tint_to_rgb, m)?)?;
 
     Ok(())
 }

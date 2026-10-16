@@ -5,7 +5,12 @@
   "default_workbook_name": "Arbeitsmappe",
   "errors": {
     "model_not_found": "Modell nicht gefunden oder Ladefehler",
-    "example_not_found": "Beispieldatei nicht gefunden oder Ladefehler"
+    "example_not_found": "Beispieldatei nicht gefunden oder Ladefehler",
+    "storage_save_failed": "Ihre Änderungen konnten nicht gespeichert werden. Möglicherweise hat der Browser keinen Speicherplatz mehr."
+  },
+  "unsaved_bar": {
+    "message": "Sie sehen eine schreibgeschützte Arbeitsmappe. Speichern Sie eine Kopie, um sie zu bearbeiten.",
+    "save_copy": "Kopie speichern"
   },
   "welcome_dialog": {
     "title": "Willkommen bei IronCalc",
@@ -51,6 +56,7 @@
     "search_workbook": "Arbeitsmappen durchsuchen",
     "search_placeholder": "Arbeitsmappe suchen...",
     "clear_search": "Suche löschen",
+    "empty_state": "Noch keine Arbeitsmappen. Arbeitsmappen, die Sie erstellen oder speichern, werden hier angezeigt.",
     "search_no_results": "Deine Suche entspricht keinem Arbeitsmappe.",
     "pinned": "Angeheftet",
     "today": "Heute",
@@ -70,8 +76,8 @@
     "cancel": "Abbrechen",
     "delete_workbooks_one": "{{count}} Arbeitsmappe löschen",
     "delete_workbooks_other": "{{count}} Arbeitsmappen löschen",
-    "bulk_delete_message_one": "Diese Arbeitsmappe wird dauerhaft gelöscht.",
-    "bulk_delete_message_other": "{{count}} Arbeitsmappen werden dauerhaft gelöscht.",
+    "bulk_delete_message_one": "Diese Arbeitsmappe wird dauerhaft gelöscht. Bereits geteilte Links funktionieren weiterhin.",
+    "bulk_delete_message_other": "{{count}} Arbeitsmappen werden dauerhaft gelöscht. Bereits geteilte Links funktionieren weiterhin.",
     "select_workbook": "{{name}} auswählen"
   },
   "file_bar": {
@@ -97,14 +103,15 @@
         "button": "Arbeitsmappe löschen",
         "title": "Sind Sie sicher?",
         "subtitle": "Die Arbeitsmappe '{{workbookName}}' wird dauerhaft gelöscht.",
-        "warning": "Diese Aktion kann nicht rückgängig gemacht werden.",
+        "warning": "Diese Aktion kann nicht rückgängig gemacht werden. Bereits geteilte Links funktionieren weiterhin.",
         "confirm_button": "Ja, löschen",
         "cancel_button": "Abbrechen"
       },
       "default_language": "Standardsprache",
-      "theme": "Design",
-      "theme_light": "Hell",
-      "theme_dark": "Dunkel"
+      "appearance": "Erscheinungsbild",
+      "appearance_light": "Hell",
+      "appearance_dark": "Dunkel",
+      "appearance_system": "System"
     },
     "help_menu": {
       "button": "Hilfe",
@@ -116,7 +123,7 @@
       "button": "Teilen",
       "copy_url": "URL kopieren",
       "copied": "Kopiert!",
-      "info_text": "Jeder mit dem Link kann auf eine Kopie dieser Arbeitsmappe zugreifen"
+      "info_text": "Jeder mit dem Link kann auf eine Kopie dieser Arbeitsmappe zugreifen. Geteilte Links können nicht gelöscht werden."
     }
   },
   "loading_screen": {

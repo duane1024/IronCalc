@@ -444,7 +444,9 @@ export default class WorksheetCanvas {
   } {
     const fontSize = style.font?.sz || 13;
     let font = `${fontSize}px ${this.theme.cellFontFamily}`;
-    let color = this.theme.defaultTextColor;
+    let color = style.fill.color
+      ? this.theme.filledCellTextColor
+      : this.theme.defaultTextColor;
 
     if (style.font) {
       // Font.color is optional: a missing color means "use the default" — fall back
@@ -1126,10 +1128,14 @@ export default class WorksheetCanvas {
       let borderLeftColor = this.getCellGridColor(selectedSheet, fillColor);
       let borderLeftStyle = "thin";
       if (border.left) {
-        borderLeftColor = this.model.resolveColor(border.left.color);
+        borderLeftColor =
+          this.model.resolveColor(border.left.color) ||
+          this.theme.defaultTextColor;
         borderLeftStyle = border.left.style;
       } else if (leftStyle.border.right) {
-        borderLeftColor = this.model.resolveColor(leftStyle.border.right.color);
+        borderLeftColor =
+          this.model.resolveColor(leftStyle.border.right.color) ||
+          this.theme.defaultTextColor;
         borderLeftStyle = leftStyle.border.right.style;
       } else if (fillColor) {
         borderLeftColor = fillColor;
@@ -1188,10 +1194,14 @@ export default class WorksheetCanvas {
     let borderTopColor = this.getCellGridColor(selectedSheet, fillColor);
     let borderTopStyle = "thin";
     if (border.top) {
-      borderTopColor = this.model.resolveColor(border.top.color);
+      borderTopColor =
+        this.model.resolveColor(border.top.color) ||
+        this.theme.defaultTextColor;
       borderTopStyle = border.top.style;
     } else if (topStyle.border.bottom) {
-      borderTopColor = this.model.resolveColor(topStyle.border.bottom.color);
+      borderTopColor =
+        this.model.resolveColor(topStyle.border.bottom.color) ||
+        this.theme.defaultTextColor;
       borderTopStyle = topStyle.border.bottom.style;
     } else if (fillColor) {
       borderTopColor = fillColor;
@@ -1505,16 +1515,16 @@ export default class WorksheetCanvas {
       }
       const selected = row >= rowStart && row <= rowEnd;
       context.fillStyle = this.theme.headerBorderColor;
-      context.fillRect(0.5, topLeftCornerY, headerColumnWidth - 1, rowHeight);
+      context.fillRect(0, topLeftCornerY, headerColumnWidth, rowHeight);
       context.fillStyle = selected
         ? isFullRowSelected
           ? this.theme.primaryMain
           : this.theme.headerSelectedBackground
         : this.theme.headerBackground;
       context.fillRect(
-        0.5,
+        0,
         topLeftCornerY + 0.5,
-        headerColumnWidth - 1,
+        headerColumnWidth,
         rowHeight - 1,
       );
       if (selected) {

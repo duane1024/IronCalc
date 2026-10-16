@@ -1,3 +1,4 @@
+use crate::number_format::parse_finite_number;
 use crate::{
     calc_result::CalcResult,
     cast::{array_node_to_string, NumberOrArray, StringOrArray, ValueOrArray},
@@ -23,18 +24,80 @@ pub(crate) fn bcast_idx(len: usize, i: usize) -> Option<usize> {
     }
 }
 
+/// What an array has beyond its end, when it is combined with a larger one:
+/// `#N/A`, as in Excel. It is an error like any other, so if the element on
+/// the other side is an error too, the one on the left comes first.
+static MISSING: ArrayNode = ArrayNode::Error(Error::NA);
+
 /// Unify how we map booleans/strings to f64
 fn to_f64(value: &ArrayNode) -> Result<f64, Error> {
     match value {
         ArrayNode::Number(f) => Ok(*f),
         ArrayNode::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-        ArrayNode::String(s) => match s.parse::<f64>() {
-            Ok(f) => Ok(f),
-            Err(_) => Err(Error::VALUE),
-        },
+        ArrayNode::String(s) => parse_finite_number(s).ok_or(Error::VALUE),
         ArrayNode::Error(err) => Err(err.clone()),
         ArrayNode::Empty => Ok(0.0),
     }
+}
+
+/// `x` to the power of `y`, as POWER and the operator `^` compute it.
+pub(crate) fn power(x: f64, y: f64) -> Result<f64, Error> {
+    if x == 0.0 && y == 0.0 {
+        return Err(Error::NUM);
+    }
+    if y == 0.0 {
+        return Ok(1.0);
+    }
+    let result = if x < 0.0 && is_one_over_an_odd_integer(y) {
+        // An odd root of a negative number is a real number: the cube root of
+        // -8 is -2. `powf` cannot tell, a third is just another fraction to it.
+        -(-x).powf(y)
+    } else {
+        x.powf(y)
+    };
+    if result.is_infinite() {
+        return Err(Error::DIV);
+    }
+    if result.is_nan() {
+        // A negative number to a power that is not an integer nor an odd root
+        return Err(Error::NUM);
+    }
+    Ok(result)
+}
+
+/// Whether `y` is 1/3, 1/5, -1/7 and so on. A float cannot hold a third, so
+/// this asks whether one over `y` is an odd integer as far as the precision of
+/// a float can tell.
+fn is_one_over_an_odd_integer(y: f64) -> bool {
+    // 2^-48: the last few bits are left to the error of the two divisions
+    const TOLERANCE: f64 = 1.0 / (16_777_216.0 * 16_777_216.0);
+    let inverse = 1.0 / y;
+    let integer = inverse.round();
+    (inverse - integer).abs() <= integer.abs() * TOLERANCE && integer % 2.0 != 0.0
+}
+
+/// What an operator, or a function that works element by element, gives when
+/// one operand is an array and the other one an error: an array of the same size with an error in every element. The error
+/// of the left operand comes first, so if the array is on the left
+/// `element_error` says which of its elements are errors of their own.
+pub(crate) fn array_of_errors(
+    array: &[Vec<ArrayNode>],
+    error: CalcResult,
+    element_error: impl Fn(&ArrayNode) -> Option<Error>,
+) -> CalcResult {
+    let CalcResult::Error { error: kind, .. } = &error else {
+        return error;
+    };
+    CalcResult::Array(
+        array
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|node| ArrayNode::Error(element_error(node).unwrap_or(kind.clone())))
+                    .collect()
+            })
+            .collect(),
+    )
 }
 
 impl<'a> Model<'a> {
@@ -46,17 +109,30 @@ impl<'a> Model<'a> {
         cell: CellReferenceIndex,
         op: &dyn Fn(f64, f64) -> Result<f64, Error>,
     ) -> CalcResult {
-        let l = match self.get_number_or_array(left, cell) {
-            Ok(f) => f,
-            Err(s) => {
-                return s;
+        let l = self.get_number_or_array(left, cell);
+        let r = self.get_number_or_array(right, cell);
+        self.arithmetic_on_values(l, r, cell, op)
+    }
+
+    /// Applies `op` element‐wise to operands that are already evaluated. An
+    /// operand that is an error makes the result an error, or an array of
+    /// errors if the other operand is an array.
+    pub(crate) fn arithmetic_on_values(
+        &mut self,
+        l: Result<NumberOrArray, CalcResult>,
+        r: Result<NumberOrArray, CalcResult>,
+        cell: CellReferenceIndex,
+        op: &dyn Fn(f64, f64) -> Result<f64, Error>,
+    ) -> CalcResult {
+        let (l, r) = match (l, r) {
+            (Ok(l), Ok(r)) => (l, r),
+            (Err(error), Ok(NumberOrArray::Array(array))) => {
+                return array_of_errors(&array, error, |_| None);
             }
-        };
-        let r = match self.get_number_or_array(right, cell) {
-            Ok(f) => f,
-            Err(s) => {
-                return s;
+            (Ok(NumberOrArray::Array(array)), Err(error)) => {
+                return array_of_errors(&array, error, |node| to_f64(node).err());
             }
+            (Err(error), _) | (_, Err(error)) => return error,
         };
         match (l, r) {
             // -----------------------------------------------------
@@ -145,23 +221,21 @@ impl<'a> Model<'a> {
 
                     let mut data_row = Vec::new();
                     for j in 0..m {
-                        let val1 = row1.and_then(|r| bcast_idx(m1, j).and_then(|cj| r.get(cj)));
-                        let val2 = row2.and_then(|r| bcast_idx(m2, j).and_then(|cj| r.get(cj)));
+                        let v1 = row1
+                            .and_then(|r| bcast_idx(m1, j).and_then(|cj| r.get(cj)))
+                            .unwrap_or(&MISSING);
+                        let v2 = row2
+                            .and_then(|r| bcast_idx(m2, j).and_then(|cj| r.get(cj)))
+                            .unwrap_or(&MISSING);
 
-                        match (val1, val2) {
-                            (Some(v1), Some(v2)) => match (to_f64(v1), to_f64(v2)) {
-                                (Ok(f1), Ok(f2)) => match op(f1, f2) {
-                                    Ok(x) => data_row.push(ArrayNode::Number(x)),
-                                    Err(Error::DIV) => data_row.push(ArrayNode::Error(Error::DIV)),
-                                    Err(Error::VALUE) => {
-                                        data_row.push(ArrayNode::Error(Error::VALUE))
-                                    }
-                                    Err(e) => data_row.push(ArrayNode::Error(e)),
-                                },
-                                (Err(e), _) | (_, Err(e)) => data_row.push(ArrayNode::Error(e)),
+                        match (to_f64(v1), to_f64(v2)) {
+                            (Ok(f1), Ok(f2)) => match op(f1, f2) {
+                                Ok(x) => data_row.push(ArrayNode::Number(x)),
+                                Err(Error::DIV) => data_row.push(ArrayNode::Error(Error::DIV)),
+                                Err(Error::VALUE) => data_row.push(ArrayNode::Error(Error::VALUE)),
+                                Err(e) => data_row.push(ArrayNode::Error(e)),
                             },
-                            // Mismatched dimensions => #VALUE!
-                            _ => data_row.push(ArrayNode::Error(Error::VALUE)),
+                            (Err(e), _) | (_, Err(e)) => data_row.push(ArrayNode::Error(e)),
                         }
                     }
                     array.push(data_row);
@@ -180,13 +254,17 @@ impl<'a> Model<'a> {
         right: &Node,
         cell: CellReferenceIndex,
     ) -> CalcResult {
-        let l = match self.get_string_or_array(left, cell) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let r = match self.get_string_or_array(right, cell) {
-            Ok(v) => v,
-            Err(e) => return e,
+        let l = self.get_string_or_array(left, cell);
+        let r = self.get_string_or_array(right, cell);
+        let (l, r) = match (l, r) {
+            (Ok(l), Ok(r)) => (l, r),
+            (Err(error), Ok(StringOrArray::Array(array))) => {
+                return array_of_errors(&array, error, |_| None);
+            }
+            (Ok(StringOrArray::Array(array)), Err(error)) => {
+                return array_of_errors(&array, error, |node| array_node_to_string(node).err());
+            }
+            (Err(error), _) | (_, Err(error)) => return error,
         };
 
         // Concatenates two array elements, propagating errors as error nodes.
@@ -232,13 +310,13 @@ impl<'a> Model<'a> {
                     let row2 = bcast_idx(n2, ri).and_then(|i| a2.get(i));
                     let mut data_row = Vec::with_capacity(cols);
                     for ci in 0..cols {
-                        let v1 = row1.and_then(|r| bcast_idx(m1, ci).and_then(|j| r.get(j)));
-                        let v2 = row2.and_then(|r| bcast_idx(m2, ci).and_then(|j| r.get(j)));
-                        let node = match (v1, v2) {
-                            (Some(v1), Some(v2)) => concat_nodes(v1, v2),
-                            _ => ArrayNode::Error(Error::VALUE),
-                        };
-                        data_row.push(node);
+                        let v1 = row1
+                            .and_then(|r| bcast_idx(m1, ci).and_then(|j| r.get(j)))
+                            .unwrap_or(&MISSING);
+                        let v2 = row2
+                            .and_then(|r| bcast_idx(m2, ci).and_then(|j| r.get(j)))
+                            .unwrap_or(&MISSING);
+                        data_row.push(concat_nodes(v1, v2));
                     }
                     array.push(data_row);
                 }
@@ -248,7 +326,8 @@ impl<'a> Model<'a> {
     }
 
     /// Applies a comparison operator element-wise.
-    /// When either operand is a range or array the result is an array of booleans;
+    /// When either operand is a range or array the result is an array of booleans,
+    /// with an error where an element of the operands is an error;
     /// when both are scalars the result is a single Boolean.
     pub(crate) fn handle_comparison(
         &mut self,
@@ -257,13 +336,20 @@ impl<'a> Model<'a> {
         cell: CellReferenceIndex,
         kind: &OpCompare,
     ) -> CalcResult {
-        let l = match self.get_value_or_array(left, cell) {
-            Ok(v) => v,
-            Err(e) => return e,
-        };
-        let r = match self.get_value_or_array(right, cell) {
-            Ok(v) => v,
-            Err(e) => return e,
+        let l = self.get_value_or_array(left, cell);
+        let r = self.get_value_or_array(right, cell);
+        let (l, r) = match (l, r) {
+            (Ok(l), Ok(r)) => (l, r),
+            (Err(error), Ok(ValueOrArray::Array(array))) => {
+                return array_of_errors(&array, error, |_| None);
+            }
+            (Ok(ValueOrArray::Array(array)), Err(error)) => {
+                return array_of_errors(&array, error, |node| match node {
+                    ArrayNode::Error(error) => Some(error.clone()),
+                    _ => None,
+                });
+            }
+            (Err(error), _) | (_, Err(error)) => return error,
         };
 
         let apply = |lv: &CalcResult, rv: &CalcResult| -> bool {
@@ -275,6 +361,17 @@ impl<'a> Model<'a> {
                 OpCompare::LessOrEqualThan => cmp < 1,
                 OpCompare::GreaterOrEqualThan => cmp > -1,
                 OpCompare::NonEqual => cmp != 0,
+            }
+        };
+
+        // Compares two elements. One that is an error is the result, the left
+        // one first.
+        let apply_to_elements = |lv: &CalcResult, rv: &CalcResult| -> ArrayNode {
+            match (lv, rv) {
+                (CalcResult::Error { error, .. }, _) | (_, CalcResult::Error { error, .. }) => {
+                    ArrayNode::Error(error.clone())
+                }
+                _ => ArrayNode::Boolean(apply(lv, rv)),
             }
         };
 
@@ -300,7 +397,7 @@ impl<'a> Model<'a> {
                 la.iter()
                     .map(|row| {
                         row.iter()
-                            .map(|n| ArrayNode::Boolean(apply(&node_to_calc(n), &rv)))
+                            .map(|n| apply_to_elements(&node_to_calc(n), &rv))
                             .collect()
                     })
                     .collect(),
@@ -309,7 +406,7 @@ impl<'a> Model<'a> {
                 ra.iter()
                     .map(|row| {
                         row.iter()
-                            .map(|n| ArrayNode::Boolean(apply(&lv, &node_to_calc(n))))
+                            .map(|n| apply_to_elements(&lv, &node_to_calc(n)))
                             .collect()
                     })
                     .collect(),
@@ -327,17 +424,15 @@ impl<'a> Model<'a> {
                     let rrow = bcast_idx(n2, ri).and_then(|i| ra.get(i));
                     let mut data_row = Vec::with_capacity(cols);
                     for ci in 0..cols {
-                        let lv = lrow
-                            .and_then(|r| bcast_idx(m1, ci).and_then(|j| r.get(j)))
-                            .map(node_to_calc);
-                        let rv = rrow
-                            .and_then(|r| bcast_idx(m2, ci).and_then(|j| r.get(j)))
-                            .map(node_to_calc);
-                        let node = match (lv, rv) {
-                            (Some(lv), Some(rv)) => ArrayNode::Boolean(apply(&lv, &rv)),
-                            _ => ArrayNode::Error(Error::VALUE),
-                        };
-                        data_row.push(node);
+                        let lv = node_to_calc(
+                            lrow.and_then(|r| bcast_idx(m1, ci).and_then(|j| r.get(j)))
+                                .unwrap_or(&MISSING),
+                        );
+                        let rv = node_to_calc(
+                            rrow.and_then(|r| bcast_idx(m2, ci).and_then(|j| r.get(j)))
+                                .unwrap_or(&MISSING),
+                        );
+                        data_row.push(apply_to_elements(&lv, &rv));
                     }
                     array.push(data_row);
                 }

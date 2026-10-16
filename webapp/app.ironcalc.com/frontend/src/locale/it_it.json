@@ -5,7 +5,12 @@
   "default_workbook_name": "Cartella",
   "errors": {
     "model_not_found": "Modello non trovato o errore durante il caricamento",
-    "example_not_found": "File di esempio non trovato o errore durante il caricamento"
+    "example_not_found": "File di esempio non trovato o errore durante il caricamento",
+    "storage_save_failed": "Impossibile salvare le modifiche. Il browser potrebbe aver esaurito lo spazio di archiviazione."
+  },
+  "unsaved_bar": {
+    "message": "Stai visualizzando una cartella di lavoro di sola lettura. Salva una copia per modificarla.",
+    "save_copy": "Salva una copia"
   },
   "welcome_dialog": {
     "title": "Benvenuto su IronCalc",
@@ -51,6 +56,7 @@
     "search_workbook": "Cerca cartelle di lavoro",
     "search_placeholder": "Cerca cartella di lavoro...",
     "clear_search": "Cancella ricerca",
+    "empty_state": "Ancora nessuna cartella di lavoro. Le cartelle di lavoro che crei o salvi appariranno qui.",
     "search_no_results": "La tua ricerca non corrisponde a nessuna cartella di lavoro.",
     "pinned": "Fissati",
     "today": "Oggi",
@@ -70,8 +76,8 @@
     "cancel": "Annulla",
     "delete_workbooks_one": "Elimina {{count}} cartella",
     "delete_workbooks_other": "Elimina {{count}} cartelle",
-    "bulk_delete_message_one": "Questa cartella di lavoro verrà eliminata definitivamente.",
-    "bulk_delete_message_other": "{{count}} cartelle di lavoro verranno eliminate definitivamente.",
+    "bulk_delete_message_one": "Questa cartella di lavoro verrà eliminata definitivamente. I link già condivisi continueranno a funzionare.",
+    "bulk_delete_message_other": "{{count}} cartelle di lavoro verranno eliminate definitivamente. I link già condivisi continueranno a funzionare.",
     "select_workbook": "Seleziona {{name}}"
   },
   "file_bar": {
@@ -97,14 +103,15 @@
         "button": "Elimina cartella di lavoro",
         "title": "Sei sicuro?",
         "subtitle": "La cartella di lavoro '{{workbookName}}' verrà eliminata definitivamente.",
-        "warning": "Questa azione non può essere annullata.",
+        "warning": "Questa azione non può essere annullata. I link già condivisi continueranno a funzionare.",
         "confirm_button": "Sì, elimina",
         "cancel_button": "Annulla"
       },
       "default_language": "Lingua predefinita",
-      "theme": "Tema",
-      "theme_light": "Chiaro",
-      "theme_dark": "Scuro"
+      "appearance": "Aspetto",
+      "appearance_light": "Chiaro",
+      "appearance_dark": "Scuro",
+      "appearance_system": "Sistema"
     },
     "help_menu": {
       "button": "Aiuto",
@@ -116,7 +123,7 @@
       "button": "Condividi",
       "copy_url": "Copia URL",
       "copied": "Copiato!",
-      "info_text": "Chiunque abbia il link potrà accedere a una copia di questa cartella di lavoro"
+      "info_text": "Chiunque abbia il link potrà accedere a una copia di questa cartella di lavoro. I link condivisi non possono essere eliminati."
     }
   },
   "loading_screen": {

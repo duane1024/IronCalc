@@ -5,7 +5,12 @@
   "default_workbook_name": "Workbook",
   "errors": {
     "model_not_found": "Model not found, or failed to load",
-    "example_not_found": "Example file not found, or failed to load"
+    "example_not_found": "Example file not found, or failed to load",
+    "storage_save_failed": "Your changes could not be saved. The browser may be out of storage space."
+  },
+  "unsaved_bar": {
+    "message": "You're viewing a read-only workbook. Save a copy to edit it.",
+    "save_copy": "Save a copy"
   },
   "welcome_dialog": {
     "title": "Welcome to IronCalc",
@@ -51,6 +56,7 @@
     "search_workbook": "Search workbooks",
     "search_placeholder": "Search workbook...",
     "clear_search": "Clear search",
+    "empty_state": "No workbooks yet. Workbooks you create or save will appear here.",
     "search_no_results": "Your search does not match any workbooks.",
     "pinned": "Pinned",
     "today": "Today",
@@ -70,8 +76,8 @@
     "cancel": "Cancel",
     "delete_workbooks_one": "Delete {{count}} workbook",
     "delete_workbooks_other": "Delete {{count}} workbooks",
-    "bulk_delete_message_one": "This workbook will be permanently deleted.",
-    "bulk_delete_message_other": "{{count}} workbooks will be permanently deleted.",
+    "bulk_delete_message_one": "This workbook will be permanently deleted. Links you've shared will keep working.",
+    "bulk_delete_message_other": "{{count}} workbooks will be permanently deleted. Links you've shared will keep working.",
     "select_workbook": "Select {{name}}"
   },
   "file_bar": {
@@ -97,14 +103,15 @@
         "button": "Delete workbook",
         "title": "Are you sure?",
         "subtitle": "The workbook '{{workbookName}}' will be permanently deleted.",
-        "warning": "This action cannot be undone.",
+        "warning": "This action cannot be undone. Links you've shared will keep working.",
         "confirm_button": "Yes, delete",
         "cancel_button": "Cancel"
       },
       "default_language": "Default language",
-      "theme": "Theme",
-      "theme_light": "Light",
-      "theme_dark": "Dark"
+      "appearance": "Appearance",
+      "appearance_light": "Light",
+      "appearance_dark": "Dark",
+      "appearance_system": "System"
     },
     "help_menu": {
       "button": "Help",
@@ -116,7 +123,7 @@
       "button": "Share",
       "copy_url": "Copy URL",
       "copied": "Copied!",
-      "info_text": "Anyone with the link will be able to access a copy of this workbook"
+      "info_text": "Anyone with the link will be able to access a copy of this workbook. Shared links can't be deleted."
     }
   },
   "loading_screen": {

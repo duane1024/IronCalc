@@ -5,7 +5,12 @@
   "default_workbook_name": "Classeur",
   "errors": {
     "model_not_found": "Modèle introuvable ou échec du chargement",
-    "example_not_found": "Fichier d'exemple introuvable ou échec du chargement"
+    "example_not_found": "Fichier d'exemple introuvable ou échec du chargement",
+    "storage_save_failed": "Vos modifications n'ont pas pu être enregistrées. Le navigateur n'a peut-être plus d'espace de stockage."
+  },
+  "unsaved_bar": {
+    "message": "Vous consultez un classeur en lecture seule. Enregistrez une copie pour le modifier.",
+    "save_copy": "Enregistrer une copie"
   },
   "welcome_dialog": {
     "title": "Bienvenue sur IronCalc",
@@ -51,6 +56,7 @@
     "search_workbook": "Rechercher des classeurs",
     "search_placeholder": "Rechercher un classeur...",
     "clear_search": "Effacer la recherche",
+    "empty_state": "Aucun classeur pour le moment. Les classeurs que vous créez ou enregistrez apparaîtront ici.",
     "search_no_results": "Votre recherche ne correspond à aucun classeur.",
     "pinned": "Épinglés",
     "today": "Aujourd'hui",
@@ -70,8 +76,8 @@
     "cancel": "Annuler",
     "delete_workbooks_one": "Supprimer {{count}} classeur",
     "delete_workbooks_other": "Supprimer {{count}} classeurs",
-    "bulk_delete_message_one": "Ce classeur sera définitivement supprimé.",
-    "bulk_delete_message_other": "{{count}} classeurs seront définitivement supprimés.",
+    "bulk_delete_message_one": "Ce classeur sera définitivement supprimé. Les liens déjà partagés continueront de fonctionner.",
+    "bulk_delete_message_other": "{{count}} classeurs seront définitivement supprimés. Les liens déjà partagés continueront de fonctionner.",
     "select_workbook": "Sélectionner {{name}}"
   },
   "file_bar": {
@@ -97,14 +103,15 @@
         "button": "Supprimer le classeur",
         "title": "Êtes-vous sûr ?",
         "subtitle": "Le classeur '{{workbookName}}' sera définitivement supprimé.",
-        "warning": "Cette action ne peut pas être annulée.",
+        "warning": "Cette action ne peut pas être annulée. Les liens déjà partagés continueront de fonctionner.",
         "confirm_button": "Oui, supprimer",
         "cancel_button": "Annuler"
       },
       "default_language": "Langue par défaut",
-      "theme": "Thème",
-      "theme_light": "Clair",
-      "theme_dark": "Sombre"
+      "appearance": "Apparence",
+      "appearance_light": "Clair",
+      "appearance_dark": "Sombre",
+      "appearance_system": "Système"
     },
     "help_menu": {
       "button": "Aide",
@@ -116,7 +123,7 @@
       "button": "Partager",
       "copy_url": "Copier l'URL",
       "copied": "Copié !",
-      "info_text": "Toute personne disposant du lien pourra accéder à une copie de ce classeur"
+      "info_text": "Toute personne disposant du lien pourra accéder à une copie de ce classeur. Les liens partagés ne peuvent pas être supprimés."
     }
   },
   "loading_screen": {

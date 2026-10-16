@@ -4,12 +4,16 @@ import { useTranslation } from "react-i18next";
 
 import "./share-workbook.css";
 
-export function ShareButton(properties: { onClick: () => void }) {
-  const { onClick } = properties;
+export function ShareButton(properties: {
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  const { onClick, disabled } = properties;
   const { t } = useTranslation();
   return (
     <Button
       type="button"
+      disabled={disabled}
       onClick={onClick}
       startIcon={<Share2 />}
       className="app-ic-share-button"

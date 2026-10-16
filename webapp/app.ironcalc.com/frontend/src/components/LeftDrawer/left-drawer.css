@@ -388,6 +388,16 @@
   transform: rotate(45deg);
 }
 
+.app-ic-drawer-workbook-list--has-checked
+  .app-ic-drawer-workbook-icon--default {
+  display: none;
+}
+
+.app-ic-drawer-workbook-list--has-checked
+  .app-ic-drawer-workbook-icon--checkbox-wrapper {
+  display: flex;
+}
+
 .app-ic-drawer-workbook-icon:hover .app-ic-drawer-workbook-icon--default,
 .app-ic-drawer-workbook-icon:focus-within
   .app-ic-drawer-workbook-icon--default {
@@ -397,16 +407,6 @@
 .app-ic-drawer-workbook-icon:hover
   .app-ic-drawer-workbook-icon--checkbox-wrapper,
 .app-ic-drawer-workbook-icon:focus-within
-  .app-ic-drawer-workbook-icon--checkbox-wrapper {
-  display: flex;
-}
-
-.app-ic-drawer-workbook-list--has-checked
-  .app-ic-drawer-workbook-icon--default {
-  display: none;
-}
-
-.app-ic-drawer-workbook-list--has-checked
   .app-ic-drawer-workbook-icon--checkbox-wrapper {
   display: flex;
 }

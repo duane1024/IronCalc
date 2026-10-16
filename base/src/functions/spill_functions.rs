@@ -57,17 +57,6 @@ fn array_node_to_calc_result(node: &ArrayNode, cell: CellReferenceIndex) -> Calc
     }
 }
 
-fn calc_result_to_array_node(result: CalcResult) -> ArrayNode {
-    match result {
-        CalcResult::Number(n) => ArrayNode::Number(n),
-        CalcResult::Boolean(b) => ArrayNode::Boolean(b),
-        CalcResult::String(s) => ArrayNode::String(s),
-        CalcResult::Error { error, .. } => ArrayNode::Error(error),
-        CalcResult::EmptyCell | CalcResult::EmptyArg => ArrayNode::Empty,
-        _ => ArrayNode::Error(Error::VALUE),
-    }
-}
-
 fn array_node_is_truthy(node: &ArrayNode) -> bool {
     match node {
         ArrayNode::Boolean(b) => *b,
@@ -142,6 +131,22 @@ fn extract_key_column(data: &[Vec<ArrayNode>], expected_len: usize) -> Option<Ve
     }
 }
 
+/// The transpose of an array: its rows become columns. The values are moved,
+/// not copied, and every row is let go of as soon as it has been read.
+pub(crate) fn transpose_array(data: Vec<Vec<ArrayNode>>) -> Vec<Vec<ArrayNode>> {
+    let num_rows = data.len();
+    let num_cols = data.first().map_or(0, |row| row.len());
+    let mut result: Vec<Vec<ArrayNode>> = (0..num_cols)
+        .map(|_| Vec::with_capacity(num_rows))
+        .collect();
+    for row in data {
+        for (transposed_row, value) in result.iter_mut().zip(row) {
+            transposed_row.push(value);
+        }
+    }
+    result
+}
+
 impl<'a> Model<'a> {
     /// Evaluate a node and convert the result to a 2-D array of ArrayNodes.
     /// Handles Range references, inline Arrays, and scalar values.
@@ -151,6 +156,15 @@ impl<'a> Model<'a> {
         cell: CellReferenceIndex,
     ) -> Result<Vec<Vec<ArrayNode>>, CalcResult> {
         let result = self.evaluate_node_in_context(node, cell);
+        self.result_to_array(result, cell)
+    }
+
+    /// What `eval_to_array` makes of the value of a node.
+    pub(crate) fn result_to_array(
+        &mut self,
+        result: CalcResult,
+        cell: CellReferenceIndex,
+    ) -> Result<Vec<Vec<ArrayNode>>, CalcResult> {
         match result {
             CalcResult::Range { left, right } => Ok(self.evaluate_range(left, right)),
             CalcResult::Array(arr) => Ok(arr),
@@ -622,7 +636,15 @@ impl<'a> Model<'a> {
                         cell,
                         "No data returned by FILTER".to_string(),
                     ),
-                    v => CalcResult::Array(vec![vec![calc_result_to_array_node(v)]]),
+                    // A range is its values: FILTER gives values, never a
+                    // reference, found or not
+                    CalcResult::Range { left, right } => {
+                        CalcResult::Array(self.evaluate_range(left, right))
+                    }
+                    // The value as it is, not an array holding it: to the
+                    // function that receives it, `""` is a text and not an
+                    // array with a text in it, which MAX for one would ignore.
+                    v => v,
                 }
             } else {
                 CalcResult::new_error(Error::CALC, cell, "No data returned by FILTER".to_string())

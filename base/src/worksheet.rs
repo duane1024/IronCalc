@@ -1,10 +1,10 @@
+use std::borrow::Cow;
+
 use crate::constants::{self, LAST_COLUMN, LAST_ROW};
 use crate::expressions::types::CellReferenceIndex;
 use crate::expressions::utils::{is_valid_column_number, is_valid_row};
 use crate::model::CellStructure;
 use crate::{expressions::token::Error, types::*};
-
-use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct WorksheetDimension {
@@ -35,12 +35,15 @@ impl Worksheet {
         self.name = name.to_string();
     }
 
-    pub fn cell(&self, row: i32, column: i32) -> Option<&Cell> {
-        self.sheet_data.get(&row)?.get(&column)
+    /// The cell at a position, if there is one. It is borrowed from the sheet
+    /// if the sheet holds it as a cell, and made for the occasion if it holds
+    /// it as a number (see `SheetData`): either way it reads as a `&Cell`.
+    pub fn cell(&self, row: i32, column: i32) -> Option<Cow<'_, Cell>> {
+        self.sheet_data.cell(row, column)
     }
 
     pub(crate) fn cell_mut(&mut self, row: i32, column: i32) -> Option<&mut Cell> {
-        self.sheet_data.get_mut(&row)?.get_mut(&column)
+        self.sheet_data.cell_mut(row, column)
     }
 
     pub(crate) fn update_cell(
@@ -54,21 +57,7 @@ impl Worksheet {
             return Err("Incorrect row or column".to_string());
         }
 
-        match self.sheet_data.get_mut(&row) {
-            Some(column_data) => match column_data.get(&column) {
-                Some(_cell) => {
-                    column_data.insert(column, new_cell);
-                }
-                None => {
-                    column_data.insert(column, new_cell);
-                }
-            },
-            None => {
-                let mut column_data = HashMap::new();
-                column_data.insert(column, new_cell);
-                self.sheet_data.insert(row, column_data);
-            }
-        }
+        self.sheet_data.set_cell(row, column, new_cell);
         Ok(())
     }
 
@@ -95,11 +84,8 @@ impl Worksheet {
     }
 
     pub fn get_style(&self, row: i32, column: i32) -> i32 {
-        match self.sheet_data.get(&row) {
-            Some(column_data) => match column_data.get(&column) {
-                Some(cell) => cell.get_style(),
-                None => self.get_row_column_style(row, column),
-            },
+        match self.sheet_data.cell(row, column) {
+            Some(cell) => cell.get_style(),
             None => self.get_row_column_style(row, column),
         }
     }
@@ -295,6 +281,8 @@ impl Worksheet {
         self.update_cell(row, column, cell)
     }
 
+    /// Sets a number in a cell. The number has to be finite: no cell holds a
+    /// NaN or an infinity, and the cell is left as it was if given one.
     pub fn set_cell_with_number(
         &mut self,
         row: i32,
@@ -302,6 +290,9 @@ impl Worksheet {
         value: f64,
         style: i32,
     ) -> Result<(), String> {
+        if !value.is_finite() {
+            return Err(format!("A cell cannot hold the number {value}"));
+        }
         let cell = Cell::new_number(value, style);
         self.update_cell(row, column, cell)
     }
@@ -653,11 +644,11 @@ impl Worksheet {
             return Err(format!("Column number '{column}' is not valid."));
         }
 
-        for row in self.sheet_data.keys() {
-            if self.cell(*row, column).is_some() {
+        for row in self.sheet_data.rows() {
+            if self.cell(row, column).is_some() {
                 column_cell_references.push(CellReferenceIndex {
                     sheet: self.sheet_id,
-                    row: *row,
+                    row,
                     column,
                 });
             }
@@ -666,12 +657,7 @@ impl Worksheet {
     }
 
     pub(crate) fn remove_cell(&mut self, row: i32, column: i32) -> Result<(), String> {
-        if let Some(row_data) = self.sheet_data.get_mut(&row) {
-            row_data.remove(&column);
-            if row_data.is_empty() {
-                self.sheet_data.remove(&row);
-            }
-        }
+        self.sheet_data.remove_cell(row, column);
         Ok(())
     }
 
@@ -708,23 +694,17 @@ impl Worksheet {
         let mut row_range: Option<(i32, i32)> = None;
         let mut column_range: Option<(i32, i32)> = None;
 
-        for (row_index, columns) in &self.sheet_data {
+        for (row_index, column_index, _) in self.sheet_data.cells() {
             row_range = if let Some((current_min, current_max)) = row_range {
-                Some((current_min.min(*row_index), current_max.max(*row_index)))
+                Some((current_min.min(row_index), current_max.max(row_index)))
             } else {
-                Some((*row_index, *row_index))
+                Some((row_index, row_index))
             };
-
-            for column_index in columns.keys() {
-                column_range = if let Some((current_min, current_max)) = column_range {
-                    Some((
-                        current_min.min(*column_index),
-                        current_max.max(*column_index),
-                    ))
-                } else {
-                    Some((*column_index, *column_index))
-                }
-            }
+            column_range = if let Some((current_min, current_max)) = column_range {
+                Some((current_min.min(column_index), current_max.max(column_index)))
+            } else {
+                Some((column_index, column_index))
+            };
         }
 
         let dimension = if let Some((min_row, max_row)) = row_range {
@@ -757,14 +737,9 @@ impl Worksheet {
             return Err("Row or column is outside valid range.".to_string());
         }
 
-        let is_empty = if let Some(data_row) = self.sheet_data.get(&row) {
-            if let Some(cell) = data_row.get(&column) {
-                matches!(cell, Cell::EmptyCell { .. })
-            } else {
-                true
-            }
-        } else {
-            true
+        let is_empty = match self.sheet_data.cell(row, column) {
+            Some(cell) => matches!(*cell, Cell::EmptyCell { .. }),
+            None => true,
         };
 
         Ok(is_empty)
@@ -786,7 +761,7 @@ impl Worksheet {
             Some(c) => c,
             None => return Err("Cell does not exist.".to_string()),
         };
-        match cell {
+        match &*cell {
             Cell::ArrayFormula { r, .. } => Ok((r.0, r.1)),
             Cell::CellFormula { .. } => Ok((1, 1)),
             _ => Err("Cell does not contain a formula.".to_string()),
@@ -807,7 +782,7 @@ impl Worksheet {
             Some(c) => c,
             None => return Ok(CellStructure::SingleCell),
         };
-        match cell {
+        match &*cell {
             Cell::ArrayFormula {
                 r,
                 kind: ArrayKind::Cse,
@@ -823,7 +798,7 @@ impl Worksheet {
                     Some(c) => c,
                     None => return Err("Invalid spill reference".to_string()),
                 };
-                match anchor_cell {
+                match &*anchor_cell {
                     Cell::ArrayFormula {
                         r,
                         kind: ArrayKind::Cse,

@@ -1,11 +1,8 @@
 import { Pin, Table2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import DeleteWorkbookDialog from "../DeleteWorkbookDialog";
-import {
-  getModelsMetadata,
-  getSelectedUuid,
-  isWorkbookPinned,
-} from "../storage";
+import { isWorkbookPinned, type ModelsMetadata } from "../storage";
+import { useModelsMetadata, useSelectedUuid } from "../useStorage";
 import { useWorkbookMenu } from "./useWorkbookMenu";
 import WorkbookMenu from "./WorkbookMenu";
 
@@ -43,12 +40,12 @@ function WorkbookList({
 
   const hasAnyChecked = checkedUuids.size > 0;
 
-  const selectedUuid = getSelectedUuid();
-  const modelsMetadata = getModelsMetadata();
+  const selectedUuid = useSelectedUuid();
+  const modelsMetadata = useModelsMetadata();
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const isSearchMode = normalizedQuery.length > 0;
 
-  const groupWorkbooks = (meta: ReturnType<typeof getModelsMetadata>) => {
+  const groupWorkbooks = (meta: ModelsMetadata) => {
     const now = Date.now();
     const msInDay = 24 * 60 * 60 * 1000;
     const pinned: string[] = [];
@@ -151,7 +148,13 @@ function WorkbookList({
   };
 
   let content: React.ReactNode;
-  if (isSearchMode) {
+  if (Object.keys(modelsMetadata).length === 0) {
+    content = (
+      <div className="app-ic-drawer-no-results">
+        {t("left_drawer.empty_state")}
+      </div>
+    );
+  } else if (isSearchMode) {
     const filteredModels = Object.keys(modelsMetadata)
       .sort((a, b) => modelsMetadata[b].createdAt - modelsMetadata[a].createdAt)
       .filter((uuid) =>

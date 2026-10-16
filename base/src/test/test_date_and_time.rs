@@ -380,7 +380,7 @@ fn test_weekday_function() {
 
     // Error cases
     assert_eq!(model._get_text("A7"), *"#ERROR!");
-    assert_eq!(model._get_text("A8"), *"#VALUE!");
+    assert_eq!(model._get_text("A8"), *"#NUM!");
     assert_eq!(model._get_text("A9"), *"#NUM!");
 }
 
@@ -412,7 +412,6 @@ fn test_weeknum_function() {
     // Error cases - invalid return_type
     model._set("A14", "=WEEKNUM(44561,0)");
     model._set("A15", "=WEEKNUM(44561,3)");
-    model._set("A16", "=WEEKNUM(44561,-1)");
 
     // Error cases - invalid dates
     model._set("A17", "=WEEKNUM(-1)");
@@ -440,9 +439,9 @@ fn test_weeknum_function() {
     // Error cases
     assert_eq!(model._get_text("A12"), *"#ERROR!");
     assert_eq!(model._get_text("A13"), *"#ERROR!");
-    assert_eq!(model._get_text("A14"), *"#VALUE!");
-    assert_eq!(model._get_text("A15"), *"#VALUE!");
-    assert_eq!(model._get_text("A16"), *"#VALUE!");
+    assert_eq!(model._get_text("A14"), *"#NUM!");
+    assert_eq!(model._get_text("A15"), *"#NUM!");
+
     assert_eq!(model._get_text("A17"), *"#NUM!");
     assert_eq!(model._get_text("A18"), *"#NUM!");
 }
@@ -721,4 +720,245 @@ fn test_fn_eomonth_wrong_arguments() {
     assert_eq!(model._get_text("A1"), *"#ERROR!");
     assert_eq!(model._get_text("A2"), *"46112");
     assert_eq!(model._get_text("A3"), *"#ERROR!");
+}
+
+#[test]
+fn test_fn_eomonth_out_of_bounds_returns_num() {
+    // Regression for #1390: EOMONTH must return #NUM! (not panic / wrap) when the
+    // result would fall outside Excel's supported date range, including when the
+    // months argument alone is far outside i32.
+    let mut model = new_empty_model();
+
+    // Beyond maximum date (Dec 31 9999)
+    model._set("A1", "=EOMONTH(DATE(9999,12,1), 1)");
+    // +12000 months lands on 3023-03-31 — still inside Excel's range (was a panic)
+    model._set("A2", "=EOMONTH(DATE(2023,3,2), 12000)");
+    // -12000 months lands before 1900 — #NUM! (was a panic)
+    model._set("A3", "=EOMONTH(DATE(2023,3,2), -12000)");
+    // Months that do not fit in i32 — #NUM! (was a panic via chrono Add)
+    model._set("A4", "=EOMONTH(DATE(2023,3,2), 1E+15)");
+    model._set("A5", "=EOMONTH(DATE(2023,3,2), -1E+15)");
+    // A still-valid shift near the edge continues to work
+    model._set("A6", "=EOMONTH(DATE(2023,3,2), 1)");
+
+    model.evaluate();
+
+    assert_eq!(model._get_text("A1"), *"#NUM!");
+    assert_eq!(model._get_text("A2"), *"410258"); // 3023-03-31
+    assert_eq!(model._get_text("A3"), *"#NUM!");
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"#NUM!");
+    // 2023-04-30
+    assert_eq!(model._get_text("A6"), *"45046");
+}
+
+#[test]
+fn test_time_function() {
+    let mut model = new_empty_model();
+
+    // Basic functionality
+    model._set("A1", "=TIME(12, 30, 45)"); // Basic time
+    model._set("A2", "=TIME(12, 0, 0)"); // Noon
+    model._set("A3", "=TIME(0, 0, 0)"); // Midnight
+
+    // Error cases
+    model._set("A4", "=TIME(-1, 30, 45)"); // Invalid hour
+    model._set("A5", "=TIME(12, -1, 45)"); // Negative minutes wrap to previous hour
+    model._set("A6", "=TIME(12, 30, -1)"); // Negative seconds wrap to previous minute
+
+    // Wrong argument count
+    model._set("A7", "=TIME(12)");
+    model._set("A8", "=TIME(12, 30)");
+    model._set("A9", "=TIME(12, 30, 45, 0)");
+
+    model.evaluate();
+
+    // Basic functionality
+    assert_eq!(model._get_text("A1"), *"0.521354167");
+    assert_eq!(model._get_text("A2"), *"0.5");
+    assert_eq!(model._get_text("A3"), *"0");
+
+    // Error cases
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"0.499826389");
+    assert_eq!(model._get_text("A6"), *"0.520821759");
+
+    // Wrong argument count
+    assert_eq!(model._get_text("A7"), *"#ERROR!");
+    assert_eq!(model._get_text("A8"), *"#ERROR!");
+    assert_eq!(model._get_text("A9"), *"#ERROR!");
+}
+
+#[test]
+fn test_hour_function() {
+    let mut model = new_empty_model();
+
+    // Basic functionality
+    model._set("A1", "=HOUR(TIME(16, 30, 45))"); // Basic time
+    model._set("A2", "=HOUR(0.5)"); // Noon
+    model._set("A3", "=HOUR(0)"); // Midnight
+
+    // Error cases
+    model._set("A4", "=HOUR(-1)"); // Negative serial
+    model._set("A5", "=HOUR(\"abc\")"); // Non-numeric text
+    model._set("A6", "=HOUR(1/0)"); // Error propagates
+
+    // Wrong argument count
+    model._set("A7", "=HOUR()");
+    model._set("A8", "=HOUR(0.5, 1)");
+
+    model.evaluate();
+
+    // Basic functionality
+    assert_eq!(model._get_text("A1"), *"16");
+    assert_eq!(model._get_text("A2"), *"12");
+    assert_eq!(model._get_text("A3"), *"0");
+
+    // Error cases
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"#VALUE!");
+    assert_eq!(model._get_text("A6"), *"#DIV/0!");
+
+    // Wrong argument count
+    assert_eq!(model._get_text("A7"), *"#ERROR!");
+    assert_eq!(model._get_text("A8"), *"#ERROR!");
+}
+
+#[test]
+fn test_minute_function() {
+    let mut model = new_empty_model();
+
+    // Basic functionality
+    model._set("A1", "=MINUTE(TIME(16, 30, 45))"); // Basic time
+    model._set("A2", "=MINUTE(0.5)"); // Noon
+    model._set("A3", "=MINUTE(TIME(12, 59, 59))"); // Last minute of the hour
+
+    // Error cases
+    model._set("A4", "=MINUTE(-1)"); // Negative serial
+    model._set("A5", "=MINUTE(\"abc\")"); // Non-numeric text
+    model._set("A6", "=MINUTE(1/0)"); // Error propagates
+
+    // Wrong argument count
+    model._set("A7", "=MINUTE()");
+    model._set("A8", "=MINUTE(0.5, 1)");
+
+    model.evaluate();
+
+    // Basic functionality
+    assert_eq!(model._get_text("A1"), *"30");
+    assert_eq!(model._get_text("A2"), *"0");
+    assert_eq!(model._get_text("A3"), *"59");
+
+    // Error cases
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"#VALUE!");
+    assert_eq!(model._get_text("A6"), *"#DIV/0!");
+
+    // Wrong argument count
+    assert_eq!(model._get_text("A7"), *"#ERROR!");
+    assert_eq!(model._get_text("A8"), *"#ERROR!");
+}
+
+#[test]
+fn test_second_function() {
+    let mut model = new_empty_model();
+
+    // Basic functionality
+    model._set("A1", "=SECOND(TIME(16, 30, 45))"); // Basic time
+    model._set("A2", "=SECOND(0.5)"); // Noon
+    model._set("A3", "=SECOND(TIME(12, 59, 59))"); // Last second of the minute
+
+    // Error cases
+    model._set("A4", "=SECOND(-1)"); // Negative serial
+    model._set("A5", "=SECOND(\"abc\")"); // Non-numeric text
+    model._set("A6", "=SECOND(1/0)"); // Error propagates
+
+    // Wrong argument count
+    model._set("A7", "=SECOND()");
+    model._set("A8", "=SECOND(0.5, 1)");
+
+    model.evaluate();
+
+    // Basic functionality
+    assert_eq!(model._get_text("A1"), *"45");
+    assert_eq!(model._get_text("A2"), *"0");
+    assert_eq!(model._get_text("A3"), *"59");
+
+    // Error cases
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"#VALUE!");
+    assert_eq!(model._get_text("A6"), *"#DIV/0!");
+
+    // Wrong argument count
+    assert_eq!(model._get_text("A7"), *"#ERROR!");
+    assert_eq!(model._get_text("A8"), *"#ERROR!");
+}
+
+#[test]
+fn test_fn_weekday_weeknum_isoweeknum_day_zero() {
+    let mut model = new_empty_model();
+
+    // Date serial 0 is 0 Jan 1900 in Excel, a valid date. We return #NUM! instead.
+    model._set("A1", "=WEEKDAY(0)");
+    model._set("A2", "=WEEKNUM(0)");
+    model._set("A3", "=ISOWEEKNUM(0)");
+
+    // C1 is an empty cell, which is treated as 0.
+    model._set("B1", "=WEEKDAY(C1)");
+    model._set("B2", "=WEEKNUM(C1)");
+    model._set("B3", "=ISOWEEKNUM(C1)");
+
+    model.evaluate();
+
+    assert_eq!(model._get_text("A1"), *"#NUM!");
+    assert_eq!(model._get_text("A2"), *"#NUM!");
+    assert_eq!(model._get_text("A3"), *"#NUM!");
+
+    assert_eq!(model._get_text("B1"), *"#NUM!");
+    assert_eq!(model._get_text("B2"), *"#NUM!");
+    assert_eq!(model._get_text("B3"), *"#NUM!");
+}
+
+#[test]
+fn test_fn_weekday_weeknum_isoweeknum_day_one() {
+    let mut model = new_empty_model();
+
+    // Date serial 1 is 31 Dec 1899 in IronCalc (a Sunday in week 53 of 1899)
+    model._set("A1", "=WEEKDAY(1)");
+    model._set("A2", "=WEEKDAY(1, 2)");
+    model._set("A3", "=WEEKNUM(1)");
+    model._set("A4", "=WEEKNUM(1, 2)");
+    model._set("A5", "=WEEKNUM(1, 21)");
+    model._set("A6", "=ISOWEEKNUM(1)");
+
+    model.evaluate();
+
+    assert_eq!(model._get_text("A1"), *"1");
+    assert_eq!(model._get_text("A2"), *"7");
+    assert_eq!(model._get_text("A3"), *"53");
+    assert_eq!(model._get_text("A4"), *"53");
+    assert_eq!(model._get_text("A5"), *"52");
+    assert_eq!(model._get_text("A6"), *"52");
+}
+
+#[test]
+fn test_fn_weeknum_invalid_return_type() {
+    let mut model = new_empty_model();
+
+    // Excel's results for these are not stable across recalculations, so they
+    // cannot be tested from an xlsx file. We follow the documented #NUM!.
+    // Date serial 46023: 1 Jan 2026, 46029: 7 Jan 2026
+    model._set("A1", "=WEEKNUM(46023, -2)");
+    model._set("A2", "=WEEKNUM(46029, -2)");
+    model._set("A3", "=WEEKNUM(46023, 34903)");
+    model._set("A4", "=WEEKNUM(46029, 34903)");
+    model._set("A5", "=WEEKNUM(46023, DATE(1995,7,23))");
+
+    model.evaluate();
+
+    assert_eq!(model._get_text("A1"), *"#NUM!");
+    assert_eq!(model._get_text("A2"), *"#NUM!");
+    assert_eq!(model._get_text("A3"), *"#NUM!");
+    assert_eq!(model._get_text("A4"), *"#NUM!");
+    assert_eq!(model._get_text("A5"), *"#NUM!");
 }

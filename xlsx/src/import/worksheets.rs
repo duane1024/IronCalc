@@ -1,31 +1,35 @@
 #![allow(clippy::unwrap_used)]
 
 use ironcalc_base::expressions::parser::{
-    new_parser_english, static_analysis::add_implicit_intersection,
+    new_parser_english, static_analysis::add_implicit_intersection, Parser,
 };
-use std::{collections::HashMap, io::Read, num::ParseIntError};
+use std::{
+    collections::HashMap,
+    io::{BufReader, Read},
+    num::ParseIntError,
+};
 
+use super::xml::XmlNode;
 use ironcalc_base::{
     expressions::{
         parser::{stringify::to_rc_format, DefinedNameS},
         token::{get_error_by_english_name, Error},
         types::CellReferenceRC,
-        utils::{column_to_number, parse_reference_a1},
+        utils::{column_to_number, is_valid_column_number, is_valid_row, parse_reference_a1},
     },
     types::{
-        ArrayKind, CalcProperties, Cell, Col, Color, Comment, DataTable, DefinedName, Dxf,
-        FormulaValue, Link, MergedCell, Row, SheetData, SheetState, SpillValue, Table, Theme,
-        Worksheet, WorksheetView,
+        ArrayKind, CalcProperties, Cell, Col, Color, Comment, DefinedName, Dxf, FormulaValue, Link,
+        MergedCell, SheetState, SpillValue, Table, Theme, Worksheet, WorksheetView,
     },
 };
-use roxmltree::Node;
 use thiserror::Error;
 
 use crate::error::XlsxError;
 
 use super::{
     conditional_formatting::load_conditional_formatting,
-    shared_strings::decode_xlsx_escapes,
+    shared_strings::{decode_xlsx_escapes, SharedStringTable},
+    sheet_data::{read_sheet_data, SheetDataXml},
     tables::load_table,
     util::{get_attribute, get_bool_false, get_color, get_number},
 };
@@ -71,7 +75,34 @@ impl WorkbookXML {
     }
 }
 
-fn parse_cell_reference(cell: &str) -> Result<(i32, i32), String> {
+/// The row and the column of a reference in its plain form, `B12`: up to three
+/// capital letters and then a number. `None` for anything else, which is not
+/// to say that it is wrong.
+fn parse_plain_cell_reference(cell: &str) -> Option<(i32, i32)> {
+    let bytes = cell.as_bytes();
+    let letters = bytes.iter().take_while(|b| b.is_ascii_uppercase()).count();
+    let digits = &bytes[letters..];
+    if !(1..=3).contains(&letters)
+        || !(1..=7).contains(&digits.len())
+        || digits[0] == b'0'
+        || !digits.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let column = bytes[..letters]
+        .iter()
+        .fold(0, |column, b| column * 26 + (b - b'A' + 1) as i32);
+    let row = digits.iter().fold(0, |row, b| row * 10 + (b - b'0') as i32);
+    (is_valid_column_number(column) && is_valid_row(row)).then_some((row, column))
+}
+
+pub(super) fn parse_cell_reference(cell: &str) -> Result<(i32, i32), String> {
+    // Every cell of a sheet says where it is, nearly always in the plain form.
+    // That one is read without the strings the general reader builds on the
+    // way, which with millions of cells were a good part of the import.
+    if let Some(position) = parse_plain_cell_reference(cell) {
+        return Ok(position);
+    }
     if let Some(r) = parse_reference_a1(cell) {
         Ok((r.row, r.column))
     } else {
@@ -79,7 +110,7 @@ fn parse_cell_reference(cell: &str) -> Result<(i32, i32), String> {
     }
 }
 
-fn parse_range(range: &str) -> Result<(i32, i32, i32, i32), String> {
+pub(super) fn parse_range(range: &str) -> Result<(i32, i32, i32, i32), String> {
     let parts: Vec<&str> = range.split(':').collect();
     if parts.len() == 1 {
         if let Some(r) = parse_reference_a1(parts[0]) {
@@ -99,7 +130,56 @@ fn parse_range(range: &str) -> Result<(i32, i32, i32, i32), String> {
 
 #[cfg(test)]
 mod test {
+    use super::{parse_plain_cell_reference, parse_reference_a1};
     use crate::import::worksheets::parse_range;
+
+    #[test]
+    fn plain_cell_references_are_read_like_any_other() {
+        let references = [
+            "A1",
+            "B12",
+            "Z9",
+            "AA10",
+            "ACN50257",
+            "XFD1048576",
+            "XFD1",
+            "A1048576",
+            // not in the sheet
+            "XFE1",
+            "A1048577",
+            "ZZZ1",
+            "A9999999",
+            "A0",
+            // not plain, or not a reference
+            "A01",
+            "$A$1",
+            "$A1",
+            "A$1",
+            "a1",
+            "AAAA1",
+            "A",
+            "1",
+            "",
+            "A1B",
+            "A-1",
+            "A1:B2",
+            "Ä1",
+        ];
+        for reference in references {
+            let general = parse_reference_a1(reference).map(|r| (r.row, r.column));
+            // What the plain reader reads is what the general one reads
+            if let Some(position) = parse_plain_cell_reference(reference) {
+                assert_eq!(Some(position), general, "{reference}");
+            }
+        }
+        assert_eq!(parse_plain_cell_reference("B12"), Some((12, 2)));
+        assert_eq!(
+            parse_plain_cell_reference("XFD1048576"),
+            Some((1_048_576, 16_384))
+        );
+        assert_eq!(parse_plain_cell_reference("XFE1"), None);
+        assert_eq!(parse_plain_cell_reference("$A$1"), None);
+    }
 
     #[test]
     fn test_parse_range() {
@@ -113,12 +193,12 @@ mod test {
     }
 }
 
-fn load_dimension(ws: Node) -> String {
+fn load_dimension(ws: &XmlNode) -> String {
     // <dimension ref="A1:O18"/>
     let application_nodes = ws
         .children()
         .filter(|n| n.has_tag_name("dimension"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     if application_nodes.len() == 1 {
         application_nodes[0]
             .attribute("ref")
@@ -129,26 +209,31 @@ fn load_dimension(ws: Node) -> String {
     }
 }
 
-fn load_columns(ws: Node) -> Result<Vec<Col>, XlsxError> {
+fn load_columns(ws: &XmlNode, default_width: f64) -> Result<Vec<Col>, XlsxError> {
     // cols
     // <cols>
     //     <col min="5" max="5" width="38.26953125" customWidth="1"/>
     //     <col min="6" max="6" width="9.1796875" style="1"/>
     //     <col min="8" max="8" width="4" customWidth="1"/>
     // </cols>
+    // NB: `width` is optional (ECMA-376 Part 1, 18.3.1.13): tools that only
+    // set a style or hide columns omit it, in which case Excel applies the
+    // sheet default width instead of rejecting the file (#1509).
     let mut cols = Vec::new();
     let columns = ws
         .children()
         .filter(|n| n.has_tag_name("cols"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     if columns.len() == 1 {
         for col in columns[0].children() {
-            let min = get_attribute(&col, "min")?;
+            let min = get_attribute(col, "min")?;
             let min = min.parse::<i32>()?;
-            let max = get_attribute(&col, "max")?;
+            let max = get_attribute(col, "max")?;
             let max = max.parse::<i32>()?;
-            let width = get_attribute(&col, "width")?;
-            let width = width.parse::<f64>()?;
+            let width = match col.attribute("width") {
+                Some(width) => width.parse::<f64>()?,
+                None => default_width,
+            };
             let custom_width = get_bool_false(col, "customWidth");
             let hidden = get_bool_false(col, "hidden");
             let style = col
@@ -167,7 +252,26 @@ fn load_columns(ws: Node) -> Result<Vec<Col>, XlsxError> {
     Ok(cols)
 }
 
-fn load_merge_cells(ws: Node) -> Result<Vec<MergedCell>, XlsxError> {
+/// Sheet default column width in Excel character units, from
+/// `<sheetFormatPr defaultColWidth="..."/>` (ECMA-376 Part 1, 18.3.1.81).
+/// Falls back to Excel's own default of 8.43 when the element or the
+/// attribute is absent or unparseable.
+fn get_default_column_width(ws: &XmlNode) -> f64 {
+    const EXCEL_DEFAULT_COLUMN_WIDTH: f64 = 8.43;
+    let format = ws
+        .children()
+        .filter(|n| n.has_tag_name("sheetFormatPr"))
+        .collect::<Vec<&XmlNode>>();
+    if format.len() != 1 {
+        return EXCEL_DEFAULT_COLUMN_WIDTH;
+    }
+    format[0]
+        .attribute("defaultColWidth")
+        .and_then(|w| w.parse::<f64>().ok())
+        .unwrap_or(EXCEL_DEFAULT_COLUMN_WIDTH)
+}
+
+fn load_merge_cells(ws: &XmlNode) -> Result<Vec<MergedCell>, XlsxError> {
     // 18.3.1.55 Merge Cells
     // <mergeCells count="1">
     //    <mergeCell ref="K7:L10"/>
@@ -179,13 +283,13 @@ fn load_merge_cells(ws: Node) -> Result<Vec<MergedCell>, XlsxError> {
     let merge_cells_nodes = ws
         .children()
         .filter(|n| n.has_tag_name("mergeCells"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     if merge_cells_nodes.len() == 1 {
         for merge_cell in merge_cells_nodes[0]
             .children()
             .filter(|n| n.has_tag_name("mergeCell"))
         {
-            let reference = get_attribute(&merge_cell, "ref")?;
+            let reference = get_attribute(merge_cell, "ref")?;
             let Ok((row, column, last_row, last_column)) = parse_range(reference) else {
                 continue;
             };
@@ -211,7 +315,7 @@ fn load_merge_cells(ws: Node) -> Result<Vec<MergedCell>, XlsxError> {
     Ok(merged_cells)
 }
 
-fn load_sheet_color(ws: Node, theme: &Theme) -> Result<Color, XlsxError> {
+fn load_sheet_color(ws: &XmlNode, theme: &Theme) -> Result<Color, XlsxError> {
     // <sheetPr>
     //     <tabColor theme="5" tint="-0.249977111117893"/>
     // </sheetPr>
@@ -219,12 +323,12 @@ fn load_sheet_color(ws: Node, theme: &Theme) -> Result<Color, XlsxError> {
     let sheet_pr = ws
         .children()
         .filter(|n| n.has_tag_name("sheetPr"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     if sheet_pr.len() == 1 {
         let tabs = sheet_pr[0]
             .children()
             .filter(|n| n.has_tag_name("tabColor"))
-            .collect::<Vec<Node>>();
+            .collect::<Vec<&XmlNode>>();
         if tabs.len() == 1 {
             color = get_color(tabs[0], theme)?;
         }
@@ -237,18 +341,13 @@ fn load_comments<R: Read + std::io::Seek>(
     path: &str,
 ) -> Result<Vec<Comment>, XlsxError> {
     let mut comments = Vec::new();
-    let mut file = archive.by_name(path)?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    let doc = roxmltree::Document::parse(&text)?;
-    let ws = doc
-        .root()
-        .first_child()
-        .ok_or_else(|| XlsxError::Xml("Corrupt XML structure".to_string()))?;
+    let file = archive.by_name(path)?;
+    let doc = XmlNode::parse(BufReader::new(file))?;
+    let ws = &doc;
     let comment_list = ws
         .children()
         .filter(|n| n.has_tag_name("commentList"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     if comment_list.len() == 1 {
         for comment in comment_list[0].children() {
             let text = comment
@@ -257,7 +356,7 @@ fn load_comments<R: Read + std::io::Seek>(
                 .map(|n| n.text().unwrap().to_string())
                 .collect::<Vec<String>>()
                 .join("");
-            let cell_ref = get_attribute(&comment, "ref")?.to_string();
+            let cell_ref = get_attribute(comment, "ref")?.to_string();
             // TODO: Read author_name from the list of authors
             let author_name = "".to_string();
             comments.push(Comment {
@@ -308,15 +407,23 @@ fn parse_reference(s: &str) -> Result<CellReferenceRC, ParseReferenceError> {
     })
 }
 
-fn from_a1_to_rc(
+/// The number in the `<v>` of a cell. One that cannot be read is 0, and so is
+/// one that is not finite ("NaN", "inf", "1e400"): no cell holds such a number.
+fn parse_cell_number(cell_value: Option<&str>) -> f64 {
+    cell_value
+        .unwrap_or("0")
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+        .unwrap_or(0.0)
+}
+
+pub(super) fn from_a1_to_rc(
     formula: String,
-    worksheets: &[String],
+    parser: &mut Parser,
     context: String,
-    tables: HashMap<String, Table>,
-    defined_names: Vec<DefinedNameS>,
     is_array_formula: bool,
 ) -> Result<String, XlsxError> {
-    let mut parser = new_parser_english(worksheets.to_owned(), defined_names, tables);
     let cell_reference =
         parse_reference(&context).map_err(|error| XlsxError::Xml(error.to_string()))?;
     let mut t = parser.parse(&formula, &cell_reference);
@@ -327,16 +434,25 @@ fn from_a1_to_rc(
     Ok(to_rc_format(&t))
 }
 
-fn get_formula_index(formula: &str, shared_formulas: &[String]) -> Option<i32> {
-    for (index, f) in shared_formulas.iter().enumerate() {
-        if f == formula {
-            return Some(index as i32);
-        }
+/// The index of a formula among the shared formulas of the sheet being read,
+/// adding it to them if it is new. `lookup` maps each formula to its index, so
+/// that a sheet with many different formulas is not searched from the start
+/// for every one of them; placeholders are not in it.
+pub(super) fn find_or_add_formula(
+    formula: String,
+    shared_formulas: &mut Vec<String>,
+    lookup: &mut HashMap<String, i32>,
+) -> i32 {
+    if let Some(index) = lookup.get(&formula) {
+        return *index;
     }
-    None
+    let index = shared_formulas.len() as i32;
+    lookup.insert(formula.clone(), index);
+    shared_formulas.push(formula);
+    index
 }
 
-enum CellArrayKind {
+pub(super) enum CellArrayKind {
     None,
     DynamicArray(i32, i32),
     ArrayFormula(i32, i32),
@@ -344,7 +460,7 @@ enum CellArrayKind {
 
 // FIXME
 #[allow(clippy::too_many_arguments)]
-fn get_cell_from_excel(
+pub(super) fn get_cell_from_excel(
     cell_value: Option<&str>,
     value_metadata: Option<&str>,
     cell_type: &str,
@@ -352,7 +468,7 @@ fn get_cell_from_excel(
     formula_index: i32,
     sheet_name: &str,
     cell_ref: &str,
-    shared_strings: &mut Vec<String>,
+    shared_strings: &mut SharedStringTable,
     rich_text_inline: Option<String>,
     anchor_cell: Option<(i32, i32)>,
     array_kind: CellArrayKind,
@@ -386,15 +502,13 @@ fn get_cell_from_excel(
             "n" => {
                 if let Some(anchor) = anchor_cell {
                     Cell::SpillCell {
-                        v: SpillValue::Number(
-                            cell_value.unwrap_or("0").parse::<f64>().unwrap_or(0.0),
-                        ),
+                        v: SpillValue::Number(parse_cell_number(cell_value)),
                         s: cell_style,
                         a: anchor,
                     }
                 } else {
                     Cell::NumberCell {
-                        v: cell_value.unwrap_or("0").parse::<f64>().unwrap_or(0.0),
+                        v: parse_cell_number(cell_value),
                         s: cell_style,
                     }
                 }
@@ -431,12 +545,7 @@ fn get_cell_from_excel(
             },
             "str" => {
                 let s = decode_xlsx_escapes(cell_value.unwrap_or(""));
-                let si = if let Some(i) = shared_strings.iter().position(|r| r == &s) {
-                    i
-                } else {
-                    shared_strings.push(s.clone());
-                    shared_strings.len() - 1
-                } as i32;
+                let si = shared_strings.index_of(&s);
 
                 if let Some(anchor) = anchor_cell {
                     Cell::SpillCell {
@@ -458,12 +567,7 @@ fn get_cell_from_excel(
             }
             "inlineStr" => {
                 let s = rich_text_inline.unwrap_or_default();
-                let si = if let Some(i) = shared_strings.iter().position(|r| r == &s) {
-                    i
-                } else {
-                    shared_strings.push(s.to_string());
-                    shared_strings.len() - 1
-                } as i32;
+                let si = shared_strings.index_of(&s);
 
                 Cell::SharedString { si, s: cell_style }
             }
@@ -501,9 +605,7 @@ fn get_cell_from_excel(
         };
         match cell_type {
             "b" => make_cell(FormulaValue::Boolean(cell_value == Some("1"))),
-            "n" => make_cell(FormulaValue::Number(
-                cell_value.unwrap_or("0").parse::<f64>().unwrap_or(0.0),
-            )),
+            "n" => make_cell(FormulaValue::Number(parse_cell_number(cell_value))),
             "e" => {
                 // For compatibility reasons Excel does not put the value #SPILL! but adds it as a metadata
                 // Older engines would just import #VALUE!
@@ -515,20 +617,20 @@ fn get_cell_from_excel(
                         _ => error_name,
                     }
                 }
-                make_cell(FormulaValue::Error {
-                    ei: get_error_by_english_name(error_name).unwrap_or(Error::ERROR),
-                    o: format!("{sheet_name}!{cell_ref}"),
-                    m: cell_value.unwrap_or("#ERROR!").to_string(),
-                })
+                make_cell(FormulaValue::new_error(
+                    get_error_by_english_name(error_name).unwrap_or(Error::ERROR),
+                    format!("{sheet_name}!{cell_ref}"),
+                    cell_value.unwrap_or("#ERROR!").to_string(),
+                ))
             }
             "s" => {
                 // Not implemented
                 println!("Invalid type (s) in {sheet_name}!{cell_ref}");
-                make_cell(FormulaValue::Error {
-                    ei: Error::NIMPL,
-                    o: format!("{sheet_name}!{cell_ref}"),
-                    m: Error::NIMPL.to_string(),
-                })
+                make_cell(FormulaValue::new_error(
+                    Error::NIMPL,
+                    format!("{sheet_name}!{cell_ref}"),
+                    Error::NIMPL.to_string(),
+                ))
             }
             "str" => {
                 // In Excel and in IronCalc all strings in cells result of a formula are *not* shared strings.
@@ -539,11 +641,11 @@ fn get_cell_from_excel(
             "d" => {
                 // Not implemented
                 println!("Invalid type (d) in {sheet_name}!{cell_ref}");
-                make_cell(FormulaValue::Error {
-                    ei: Error::NIMPL,
-                    o: format!("{sheet_name}!{cell_ref}"),
-                    m: Error::NIMPL.to_string(),
-                })
+                make_cell(FormulaValue::new_error(
+                    Error::NIMPL,
+                    format!("{sheet_name}!{cell_ref}"),
+                    Error::NIMPL.to_string(),
+                ))
             }
             "inlineStr" => {
                 // NB: This is untested, I don't know of any engine that uses inline strings in formulas
@@ -554,11 +656,11 @@ fn get_cell_from_excel(
             _ => {
                 // error
                 println!("Unexpected type ({cell_type}) in {sheet_name}!{cell_ref}");
-                make_cell(FormulaValue::Error {
-                    ei: Error::ERROR,
-                    o: format!("{sheet_name}!{cell_ref}"),
-                    m: Error::ERROR.to_string(),
-                })
+                make_cell(FormulaValue::new_error(
+                    Error::ERROR,
+                    format!("{sheet_name}!{cell_ref}"),
+                    Error::ERROR.to_string(),
+                ))
             }
         }
     }
@@ -583,30 +685,25 @@ fn load_sheet_rels<R: Read + std::io::Seek>(
     if file.is_err() {
         return Ok((comments, hyperlinks));
     }
-    let mut text = String::new();
-    file.unwrap().read_to_string(&mut text)?;
-    let doc = roxmltree::Document::parse(&text)?;
+    let doc = XmlNode::parse(BufReader::new(file?))?;
 
     let rels = doc
-        .root()
-        .first_child()
-        .ok_or_else(|| XlsxError::Xml("Corrupt XML structure".to_string()))?
         .children()
         .filter(|n| n.has_tag_name("Relationship"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     for rel in rels {
-        let t = get_attribute(&rel, "Type")?.to_string();
+        let t = get_attribute(rel, "Type")?.to_string();
         if t.ends_with("comments") {
-            let mut target = get_attribute(&rel, "Target")?.to_string();
+            let mut target = get_attribute(rel, "Target")?.to_string();
             // Target="../comments1.xlsx"
             target.replace_range(..2, v[0]);
             comments = load_comments(archive, &target)?;
         } else if t.ends_with("hyperlink") {
-            let id = get_attribute(&rel, "Id")?.to_string();
-            let target = get_attribute(&rel, "Target")?.to_string();
+            let id = get_attribute(rel, "Id")?.to_string();
+            let target = get_attribute(rel, "Target")?.to_string();
             hyperlinks.insert(id, target);
         } else if t.ends_with("table") {
-            let mut target = get_attribute(&rel, "Target")?.to_string();
+            let mut target = get_attribute(rel, "Target")?.to_string();
 
             let path = if let Some(p) = target.strip_prefix('/') {
                 p.to_string()
@@ -638,7 +735,7 @@ const MAX_HYPERLINK_RANGE_CELLS: i64 = 10_000;
 /// (`hyperlink_rels`), internal links have a `location` attribute instead.
 /// The `display` attribute is skipped: the displayed text is the content of the cell.
 fn load_hyperlinks(
-    ws: Node,
+    ws: &XmlNode,
     hyperlink_rels: &HashMap<String, String>,
 ) -> Result<HashMap<(i32, i32), Link>, XlsxError> {
     let mut links = HashMap::new();
@@ -646,17 +743,17 @@ fn load_hyperlinks(
         .children()
         .filter(|n| n.has_tag_name("hyperlinks"))
         .flat_map(|n| n.children().filter(|n| n.has_tag_name("hyperlink")))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
     for node in hyperlink_nodes {
-        let cell_ref = get_attribute(&node, "ref")?;
+        let cell_ref = get_attribute(node, "ref")?;
         // Although it is normally a single cell, the ref can be a range like "B2:C3"
         let (row_start, column_start, row_end, column_end) =
             parse_range(cell_ref).map_err(XlsxError::Xml)?;
         let tooltip = node.attribute("tooltip").map(str::to_string);
-        let rel_id = node.attribute((
+        let rel_id = node.attribute_ns(
             "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
             "id",
-        ));
+        );
         let link = match rel_id {
             Some(rel_id) => {
                 let target = match hyperlink_rels.get(rel_id) {
@@ -722,7 +819,7 @@ impl Default for SheetView {
     }
 }
 
-fn get_sheet_view(ws: Node) -> SheetView {
+fn get_sheet_view(ws: &XmlNode) -> SheetView {
     // <sheetViews>
     //   <sheetView workbookViewId="0">
     //     <selection activeCell="E10" sqref="E10"/>
@@ -752,7 +849,7 @@ fn get_sheet_view(ws: Node) -> SheetView {
     let sheet_views = ws
         .children()
         .filter(|n| n.has_tag_name("sheetViews"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
 
     // We are only expecting one `sheetViews` element. Otherwise return a default
     if sheet_views.len() != 1 {
@@ -762,7 +859,7 @@ fn get_sheet_view(ws: Node) -> SheetView {
     let sheet_view = sheet_views[0]
         .children()
         .filter(|n| n.has_tag_name("sheetView"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
 
     // We are only expecting one `sheetView` element. Otherwise return a default
     if sheet_view.len() != 1 {
@@ -776,7 +873,7 @@ fn get_sheet_view(ws: Node) -> SheetView {
     let pane = sheet_view
         .children()
         .filter(|n| n.has_tag_name("pane"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
 
     // 18.18.53 ST_PaneState (Pane State)
     // frozen, frozenSplit, split
@@ -792,7 +889,7 @@ fn get_sheet_view(ws: Node) -> SheetView {
     let selections = sheet_view
         .children()
         .filter(|n| n.has_tag_name("selection"))
-        .collect::<Vec<Node>>();
+        .collect::<Vec<&XmlNode>>();
 
     if let Some(selection) = selections.last() {
         let active_cell = match selection.attribute("activeCell").map(parse_cell_reference) {
@@ -848,7 +945,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     settings: SheetSettings,
     worksheets: &[String],
     tables: &HashMap<String, Table>,
-    shared_strings: &mut Vec<String>,
+    shared_strings: &mut SharedStringTable,
     defined_names: Vec<DefinedNameS>,
     theme: &Theme,
     dxfs: &mut Vec<Dxf>,
@@ -857,425 +954,33 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
     let sheet_id = settings.id;
     let state = &settings.state;
 
-    let mut file = archive.by_name(path)?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
-    let doc = roxmltree::Document::parse(&text)?;
-    let ws = doc
-        .root()
-        .first_child()
-        .ok_or_else(|| XlsxError::Xml("Corrupt XML structure".to_string()))?;
-    let mut shared_formulas = Vec::new();
+    let file = archive.by_name(path)?;
+    // One parser for the whole sheet: building one clones the defined names
+    // and tables, which is far too much to do once per formula cell.
+    let mut parser = new_parser_english(worksheets.to_owned(), defined_names, tables.clone());
+    // The cells are streamed; what is left of the worksheet is small and is
+    // read as a tree.
+    let SheetDataXml {
+        worksheet,
+        mut sheet_data,
+        rows,
+        shared_formulas,
+        data_tables,
+    } = read_sheet_data(
+        BufReader::new(file),
+        sheet_name,
+        &mut parser,
+        shared_strings,
+    )?;
+    let ws = &worksheet;
 
     let dimension = load_dimension(ws);
 
     let sheet_view = get_sheet_view(ws);
 
-    let cols = load_columns(ws)?;
+    let default_column_width = get_default_column_width(ws);
+    let cols = load_columns(ws, default_column_width)?;
     let color = load_sheet_color(ws, theme)?;
-
-    // sheetData
-    // <row r="1" spans="1:15" x14ac:dyDescent="0.35">
-    //     <c r="A1" t="s">
-    //         <v>0</v>
-    //     </c>
-    //     <c r="D1">
-    //         <f>C1+1</f>
-    //     </c>
-    // </row>
-
-    // holds the row heights
-    let mut rows = Vec::new();
-    let mut sheet_data = SheetData::new();
-    let sheet_data_nodes = ws
-        .children()
-        .filter(|n| n.has_tag_name("sheetData"))
-        .collect::<Vec<Node>>()[0];
-
-    let default_row_height = 14.5;
-
-    // Map from the formula index in Excel to the index in IronCalc
-    let mut index_map = HashMap::new();
-
-    // Cells part of an array formula
-    let mut array_cell = HashMap::new();
-
-    // Excel Data Tables (What-If Analysis) anchored on this sheet.
-    let mut data_tables = Vec::new();
-
-    for row in sheet_data_nodes
-        .children()
-        .filter(|node| node.has_tag_name("row"))
-    {
-        // This is the row number 1-indexed
-        let mut row_index = match get_attribute(&row, "r") {
-            Ok(s) => Some(s.parse::<i32>()?),
-            Err(_) => None,
-        };
-        // `spans` is not used in IronCalc at the moment (it's an optimization)
-        // let spans = row.attribute("spans");
-        // This is the height of the row
-        let has_height_attribute;
-        let height = match row.attribute("ht") {
-            Some(s) => {
-                has_height_attribute = true;
-                s.parse::<f64>().unwrap_or(default_row_height)
-            }
-            None => {
-                has_height_attribute = false;
-                default_row_height
-            }
-        };
-        let custom_height = get_bool_false(row, "customHeight");
-        // The height of the row is always the visible height of the row
-        // If custom_height is false that means the height was calculated automatically:
-        // for example because a cell has many lines or a larger font
-
-        let row_style = match row.attribute("s") {
-            Some(s) => s.parse::<i32>().unwrap_or(0),
-            None => 0,
-        };
-        let custom_format = get_bool_false(row, "customFormat");
-        let hidden = get_bool_false(row, "hidden");
-
-        if let Some(row_index) = row_index {
-            if custom_height || custom_format || row_style != 0 || has_height_attribute || hidden {
-                rows.push(Row {
-                    r: row_index,
-                    height,
-                    s: row_style,
-                    custom_height,
-                    custom_format,
-                    hidden,
-                });
-            }
-        }
-
-        // Unused attributes:
-        // * thickBot, thickTop, ph, collapsed, outlineLevel
-
-        let mut data_row = HashMap::new();
-
-        // 18.3.1.4 c (Cell)
-        // Child Elements:
-        // * v: Cell value
-        // * is: Rich Text Inline
-        // * f: Formula
-        // Attributes:
-        // r: reference. A1 style
-        // s: style index
-        // t: cell type
-        // cm: cell metadata (used for dynamic arrays)
-        // vm: value metadata (used for #SPILL! and #CALC! errors)
-        // ph: Show Phonetic, unused
-        for cell in row.children().filter(|node| node.has_tag_name("c")) {
-            let cell_ref = get_attribute(&cell, "r")?;
-            let (r_index, column_index) = parse_cell_reference(cell_ref).map_err(XlsxError::Xml)?;
-            // Update the row_index if it was not set before
-            if row_index.is_none() {
-                row_index = Some(r_index);
-            }
-
-            let value_metadata = cell.attribute("vm");
-
-            // We check the value "v" child.
-            let vs: Vec<Node> = cell.children().filter(|n| n.has_tag_name("v")).collect();
-            let cell_value = if vs.len() == 1 {
-                Some(vs[0].text().unwrap_or(""))
-            } else {
-                None
-            };
-
-            // <c r="A1" t="inlineStr">
-            //   <is>
-            //     <t>Hello, World!</t>
-            //   </is>
-            // </c>
-            let cell_rich_text_nodes: Vec<Node> =
-                cell.children().filter(|n| n.has_tag_name("is")).collect();
-            let cell_rich_text = if cell_rich_text_nodes.is_empty() {
-                None
-            } else {
-                let texts: Vec<String> = cell_rich_text_nodes[0]
-                    .descendants()
-                    .filter(|n| n.has_tag_name("t"))
-                    .filter_map(|n| n.text())
-                    .map(|s| s.to_string())
-                    .collect();
-
-                Some(texts.join(""))
-            };
-
-            let cell_metadata = cell.attribute("cm");
-            let is_dynamic_array = cell_metadata == Some("1");
-
-            // type, the default type being "n" for number
-            // If the cell does not have a value is an empty cell
-            let cell_type = match cell.attribute("t") {
-                Some(t) => t,
-                None => {
-                    if cell_value.is_none() {
-                        "empty"
-                    } else {
-                        "n"
-                    }
-                }
-            };
-
-            // style index, the default style is 0
-            let cell_style = match cell.attribute("s") {
-                Some(s) => s.parse::<i32>().unwrap_or(0),
-                None => 0,
-            };
-
-            // Check for formula
-            // In Excel some formulas are shared and some are not, but in IronCalc all formulas are shared
-            // A cell with a "non-shared" formula is like:
-            // <c r="E3">
-            //   <f>C2+1</f>
-            //   <v>3</v>
-            // </c>
-            // A cell with a shared formula will be either an "anchor" cell:
-            // <c r="D2">
-            //   <f t="shared" ref="D2:D3" si="0">C2+1</f>
-            //   <v>3</v>
-            // </c>
-            // Or a child cell:
-            // <c r="D3">
-            //   <f t="shared" si="0"/>
-            //   <v>4</v>
-            // </c>
-            // In IronCalc two cells have the same formula iff the R1C1 representation is the same
-            // TODO: This algorithm could end up with "repeated" shared formulas
-            //       We could solve that with a second transversal.
-
-            // In Excel a volatile spill formula might have an f element in the spilled cells.
-            // But it is not a shared formula. For example:
-            // <c r="A19" s="3" cm="1">
-            //   <f t="array" aca="1" ref="A19:C21" ca="1">_xlfn.RANDARRAY(3,3, 0, 100,TRUE)</f>
-            //   <v>52</v>
-            // </c>
-            // <c r="B19" s="3">
-            //   <f ca="1"/>
-            //   <v>20</v>
-            // </c>
-            // <c r="C19" s="3">
-            //   <f ca="1"/>
-            //   <v>41</v>
-            // </c>
-            // aca: Always Calculate Array
-            // ca: Calculate Always
-            // Those are hints Excel uses to always calculate volatiles
-            // We do not use those in IronCalc
-            let fs: Vec<Node> = cell.children().filter(|n| n.has_tag_name("f")).collect();
-            let mut formula_index = -1;
-            let mut array_kind = CellArrayKind::None;
-            if fs.len() == 1 {
-                // formula types:
-                // 18.18.6 ST_CellFormulaType (Formula Type)
-                // array (Array Formula) Formula is an array formula.
-                // dataTable (Table Formula) Formula is a data table formula.
-                // normal (Normal) Formula is a regular cell formula. (Default)
-                // shared (Shared Formula) Formula is part of a shared formula.
-                let formula_node = fs[0];
-                let mut formula_type = formula_node.attribute("t").unwrap_or("normal");
-                let formula_ref = formula_node.attribute("ref");
-                if formula_type == "normal"
-                    && formula_node.attribute("ca") == Some("1")
-                    && formula_node.text().is_none()
-                    && !formula_node.children().any(|n| n.is_element())
-                {
-                    // A daughter cell of a shared formula (<f t="shared" ca="1" si="1"/>) is
-                    // also empty and may carry ca="1"; only an untyped <f ca="1"/> is a
-                    // volatile spill placeholder.
-                    // This is a volatile formula that needs to be recalculated at each calculation.
-                    // exit the if statement
-                    // <f ca="1"/>
-                    formula_type = "hint-volatile";
-                }
-                match formula_type {
-                    "shared" => {
-                        // We have a shared formula
-                        let si = get_attribute(&formula_node, "si")?;
-                        let si = si.parse::<i32>()?;
-                        match formula_ref {
-                            Some(_) => {
-                                // It's the anchor cell. We do not use the ref attribute in IronCalc
-                                let formula = formula_node.text().unwrap_or("").to_string();
-                                let context = format!("{sheet_name}!{cell_ref}");
-                                let formula = from_a1_to_rc(
-                                    formula,
-                                    worksheets,
-                                    context,
-                                    tables.clone(),
-                                    defined_names.clone(),
-                                    false,
-                                )?;
-                                match index_map.get(&si) {
-                                    Some(index) => {
-                                        // The index for that formula already exists meaning we bumped into a daughter cell first
-                                        // TODO: Worth assert the content is a placeholder?
-                                        formula_index = *index;
-                                        shared_formulas.insert(formula_index as usize, formula);
-                                    }
-                                    None => {
-                                        // We haven't met any of the daughter cells
-                                        match get_formula_index(&formula, &shared_formulas) {
-                                            // The formula is already present, use that index
-                                            Some(index) => {
-                                                formula_index = index;
-                                            }
-                                            None => {
-                                                shared_formulas.push(formula);
-                                                formula_index = shared_formulas.len() as i32 - 1;
-                                            }
-                                        };
-                                        index_map.insert(si, formula_index);
-                                    }
-                                }
-                            }
-                            None => {
-                                // It's a daughter cell
-                                match index_map.get(&si) {
-                                    Some(index) => {
-                                        formula_index = *index;
-                                    }
-                                    None => {
-                                        // Haven't bumped into the anchor cell yet. We insert a placeholder.
-                                        // Note that it is perfectly possible that the formula of the anchor cell
-                                        // is already in the set of array formulas. This will lead to the above mention duplicity.
-                                        // This is not a problem
-                                        let placeholder = "".to_string();
-                                        shared_formulas.push(placeholder);
-                                        formula_index = shared_formulas.len() as i32 - 1;
-                                        index_map.insert(si, formula_index);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "dataTable" => {
-                        let range = get_attribute(&formula_node, "ref")?.to_string();
-                        let two_dimensional = formula_node.attribute("dt2D") == Some("1");
-                        let row_oriented = formula_node.attribute("dtr") == Some("1");
-                        let r1 = get_attribute(&formula_node, "r1")?.to_string();
-                        let r2 = formula_node.attribute("r2").map(|s| s.to_string());
-                        let calculate_always = formula_node.attribute("ca") == Some("1");
-                        data_tables.push(DataTable {
-                            range,
-                            two_dimensional,
-                            row_oriented,
-                            r1,
-                            r2,
-                            calculate_always,
-                        });
-                    }
-                    "array" => {
-                        let range = match formula_ref {
-                            Some(r) => r,
-                            None => {
-                                return Err(XlsxError::Xml(
-                                    "Array formulas must have a ref attribute".to_string(),
-                                ))
-                            }
-                        };
-                        // The reference is the set of cell it spills into.
-                        let (row1, column1, row2, column2) = parse_range(range)
-                            .map_err(|_| XlsxError::Xml(format!("Invalid range: {}", range)))?;
-                        // (row1, colum1) has to be this cell. We need to mark all the other ones as part of the array formula
-                        if row1 != r_index || column1 != column_index {
-                            return Err(XlsxError::Xml(
-                                "The first cell of the range of an array formula must be the anchor cell".to_string(),
-                            ));
-                        }
-                        for r in row1..=row2 {
-                            for c in column1..=column2 {
-                                if r == row1 && c == column1 {
-                                    // skip the anchor cell
-                                    continue;
-                                }
-                                array_cell.insert((r, c), (r_index, column_index));
-                            }
-                        }
-                        if is_dynamic_array {
-                            array_kind =
-                                CellArrayKind::DynamicArray(column2 - column1 + 1, row2 - row1 + 1);
-                        } else {
-                            array_kind =
-                                CellArrayKind::ArrayFormula(column2 - column1 + 1, row2 - row1 + 1);
-                        }
-                        let formula = formula_node.text().unwrap_or("").to_string();
-                        let context = format!("{sheet_name}!{cell_ref}");
-                        let formula = from_a1_to_rc(
-                            formula,
-                            worksheets,
-                            context,
-                            tables.clone(),
-                            defined_names.clone(),
-                            true,
-                        )?;
-
-                        match get_formula_index(&formula, &shared_formulas) {
-                            Some(index) => formula_index = index,
-                            None => {
-                                shared_formulas.push(formula);
-                                formula_index = shared_formulas.len() as i32 - 1;
-                            }
-                        }
-                    }
-                    "normal" => {
-                        // Its a cell with a simple formula
-                        let formula = formula_node.text().unwrap_or("").to_string();
-                        let context = format!("{sheet_name}!{cell_ref}");
-                        let formula = from_a1_to_rc(
-                            formula,
-                            worksheets,
-                            context,
-                            tables.clone(),
-                            defined_names.clone(),
-                            false,
-                        )?;
-
-                        match get_formula_index(&formula, &shared_formulas) {
-                            Some(index) => formula_index = index,
-                            None => {
-                                shared_formulas.push(formula);
-                                formula_index = shared_formulas.len() as i32 - 1;
-                            }
-                        }
-                    }
-                    "hint-volatile" => {}
-                    _ => {
-                        return Err(XlsxError::Xml(format!(
-                            "Invalid formula type {formula_type:?}.",
-                        )));
-                    }
-                }
-            }
-            let anchor_cell = array_cell.get(&(r_index, column_index)).cloned();
-            let cell = get_cell_from_excel(
-                cell_value,
-                value_metadata,
-                cell_type,
-                cell_style,
-                formula_index,
-                sheet_name,
-                cell_ref,
-                shared_strings,
-                cell_rich_text,
-                anchor_cell,
-                array_kind,
-            );
-            data_row.insert(column_index, cell);
-        }
-        if let Some(row_index) = row_index {
-            sheet_data.insert(row_index, data_row);
-        } else {
-            return Err(XlsxError::Xml(
-                "Row without a row index (r attribute)".to_string(),
-            ));
-        }
-    }
 
     let merged_cells = load_merge_cells(ws)?;
 
@@ -1288,7 +993,7 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
                 if row == merged_cell.row && column == merged_cell.column {
                     continue;
                 }
-                if let Some(cell) = sheet_data.get_mut(&row).and_then(|r| r.get_mut(&column)) {
+                if let Some(cell) = sheet_data.cell_mut(row, column) {
                     *cell = Cell::EmptyCell {
                         s: cell.get_style(),
                     };
@@ -1360,7 +1065,7 @@ pub(super) fn load_sheets<R: Read + std::io::Seek>(
     rels: &HashMap<String, Relationship>,
     workbook: &WorkbookXML,
     tables: &mut HashMap<String, Table>,
-    shared_strings: &mut Vec<String>,
+    shared_strings: &mut SharedStringTable,
     theme: &Theme,
     dxfs: &mut Vec<Dxf>,
 ) -> Result<(Vec<Worksheet>, u32), XlsxError> {
@@ -1439,7 +1144,22 @@ mod tests {
 
     use ironcalc_base::types::Link;
 
-    use crate::import::worksheets::{load_hyperlinks, parse_reference};
+    use crate::import::xml::XmlNode;
+
+    use crate::import::worksheets::{
+        get_default_column_width, load_columns, load_hyperlinks, parse_cell_number, parse_reference,
+    };
+
+    #[test]
+    fn cell_numbers_are_finite() {
+        assert_eq!(parse_cell_number(Some("12.5")), 12.5);
+        assert_eq!(parse_cell_number(Some("-1e308")), -1e308);
+        assert_eq!(parse_cell_number(None), 0.0);
+        // What cannot be read is 0, and so is what is not a finite number
+        for value in ["", "abc", "NaN", "nan", "inf", "-inf", "Infinity", "1e400"] {
+            assert_eq!(parse_cell_number(Some(value)), 0.0, "{value}");
+        }
+    }
 
     #[test]
     fn parse_reference_works() {
@@ -1464,6 +1184,50 @@ mod tests {
     }
 
     #[test]
+    fn load_columns_missing_width_falls_back_to_sheet_default() {
+        // A <col> without a width attribute is valid OOXML (#1509): Excel
+        // applies the sheet default width instead of rejecting the file.
+        let xml = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <sheetFormatPr baseColWidth="8" defaultColWidth="9.1640625" defaultRowHeight="12"/>
+            <cols>
+                <col min="1" max="1" width="5.25" customWidth="1"/>
+                <col min="2" max="55" hidden="1" style="1"/>
+            </cols>
+        </worksheet>"#;
+        let doc = XmlNode::parse_str(xml).unwrap();
+        let ws = &doc;
+
+        assert_eq!(get_default_column_width(ws), 9.1640625);
+        let cols = load_columns(ws, get_default_column_width(ws)).unwrap();
+        assert_eq!(cols.len(), 2);
+        assert_eq!(cols[0].width, 5.25);
+        assert!(cols[0].custom_width);
+        // No width attribute: sheet default applies, and the column is not
+        // marked as custom width.
+        assert_eq!(cols[1].width, 9.1640625);
+        assert!(!cols[1].custom_width);
+        assert!(cols[1].hidden);
+        assert_eq!(cols[1].style, Some(1));
+    }
+
+    #[test]
+    fn load_columns_missing_width_without_sheet_format_uses_excel_default() {
+        let xml = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+            <cols>
+                <col min="3" max="3" style="2"/>
+            </cols>
+        </worksheet>"#;
+        let doc = XmlNode::parse_str(xml).unwrap();
+        let ws = &doc;
+
+        assert_eq!(get_default_column_width(ws), 8.43);
+        let cols = load_columns(ws, get_default_column_width(ws)).unwrap();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].width, 8.43);
+        assert!(!cols[0].custom_width);
+    }
+
+    #[test]
     fn load_hyperlinks_skips_malformed_and_caps_huge_ranges() {
         let xml = r#"<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
             <hyperlinks>
@@ -1475,8 +1239,8 @@ mod tests {
                 <hyperlink ref="F1" r:id="rId9"/>
             </hyperlinks>
         </worksheet>"#;
-        let doc = roxmltree::Document::parse(xml).unwrap();
-        let ws = doc.root().first_child().unwrap();
+        let doc = XmlNode::parse_str(xml).unwrap();
+        let ws = &doc;
         // no relationships: the r:id hyperlink is dangling
         let rels = HashMap::new();
 

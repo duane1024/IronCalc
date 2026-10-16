@@ -1,5 +1,5 @@
 import type { Preview } from "@storybook/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { I18nextProvider } from "react-i18next";
 import i18n from "../src/i18n";
 import {
@@ -25,14 +25,12 @@ function PreviewProviders({
   locale: string;
 }) {
   const [isLoaded, setIsLoaded] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const themeVariables = themes[themeName] ?? themes.default;
 
   useEffect(() => {
-    const themeVariables = themes[themeName];
-    if (rootRef.current && themeVariables) {
-      setThemeVariables(themeVariables, rootRef.current);
-    }
-  }, [themeName]);
+    document.body.style.backgroundColor =
+      themeVariables["--palette-common-white"];
+  }, [themeVariables]);
 
   useEffect(() => {
     async function start() {
@@ -50,7 +48,14 @@ function PreviewProviders({
   }
 
   return (
-    <div ref={rootRef} className="ic-root">
+    <div
+      className="ic-root"
+      ref={(el) => {
+        if (el) {
+          setThemeVariables(themeVariables, el);
+        }
+      }}
+    >
       <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
     </div>
   );
@@ -87,6 +92,11 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: ["Components", ["Workbook", "*"]],
+      },
+    },
     controls: {
       matchers: {
         color: /(background|color)$/i,

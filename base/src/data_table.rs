@@ -8,7 +8,7 @@ use crate::{
         parser::parse_range, token::Error, types::CellReferenceIndex, utils::parse_reference_a1,
     },
     model::Model,
-    types::{Cell, DataTable, Worksheet},
+    types::{DataTable, Worksheet},
 };
 
 struct ResolvedDataTable {
@@ -105,7 +105,7 @@ impl Model<'_> {
                     .worksheet(cell_reference.sheet)
                     .ok()
                     .and_then(|ws| ws.cell(cell_reference.row, cell_reference.column))
-                    .map_or(0, Cell::get_style);
+                    .map_or(0, |cell| cell.get_style());
                 self.write_value(*cell_reference, value, style);
             }
 
@@ -299,7 +299,7 @@ impl Model<'_> {
             .ok()
             .and_then(|ws| ws.cell(cell_reference.row, cell_reference.column))
         {
-            Some(cell) => self.get_cell_value(cell, cell_reference),
+            Some(cell) => self.get_cell_value(&cell, cell_reference),
             None => CalcResult::EmptyCell,
         }
     }

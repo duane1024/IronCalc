@@ -5,7 +5,7 @@ mod test_en_examples;
 mod test_fr_examples;
 mod test_general;
 mod test_parse_formatted_number;
+mod test_rounding_carry;
 mod test_scientific;
 mod test_special_dollar;
 mod test_time;
-mod test_rounding_carry;

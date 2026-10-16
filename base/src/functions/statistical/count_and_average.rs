@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 
-use crate::constants::{LAST_COLUMN, LAST_ROW};
 use crate::expressions::parser::ArrayNode;
 use crate::expressions::types::CellReferenceIndex;
+use crate::number_format::parse_finite_number;
 use crate::{
     calc_result::CalcResult, expressions::parser::Node, expressions::token::Error, model::Model,
 };
@@ -286,7 +286,7 @@ impl<'a> Model<'a> {
                     if let Node::ReferenceKind { .. } = arg {
                         // Do nothing
                         count += 1.0;
-                    } else if let Ok(t) = s.parse::<f64>() {
+                    } else if let Some(t) = parse_finite_number(&s) {
                         sum += t;
                         count += 1.0;
                     } else {
@@ -338,7 +338,8 @@ impl<'a> Model<'a> {
                     result += 1.0;
                 }
                 CalcResult::String(s)
-                    if !matches!(arg, Node::ReferenceKind { .. }) && s.parse::<f64>().is_ok() =>
+                    if !matches!(arg, Node::ReferenceKind { .. })
+                        && parse_finite_number(&s).is_some() =>
                 {
                     result += 1.0;
                 }
@@ -491,29 +492,12 @@ impl<'a> Model<'a> {
                     let column1 = left.column;
                     let mut column2 = right.column;
 
-                    if row1 == 1 && row2 == LAST_ROW {
-                        row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-                    if column1 == 1 && column2 == LAST_COLUMN {
-                        column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
+                    match self.clip_to_used_area(left.sheet, row1, column1, row2, column2) {
+                        Ok((r, c)) => {
+                            row2 = r;
+                            column2 = c;
+                        }
+                        Err(message) => return CalcResult::new_error(Error::ERROR, cell, message),
                     }
 
                     for row in row1..=row2 {

@@ -11,12 +11,12 @@ fn test_simple_error_propagation() {
     model._set("A2", "=2+A1");
     model._set("A3", "=C2+A2");
     model.evaluate();
-    match model._get_cell("Sheet1!A3") {
+    match &model._get_cell("Sheet1!A3") {
         Cell::CellFormula {
-            v: FormulaValue::Error { o, .. },
+            v: FormulaValue::Error { d, .. },
             ..
         } => {
-            assert_eq!(o, "Sheet1!A1");
+            assert_eq!(d.o, "Sheet1!A1");
         }
         _ => unreachable!(),
     }

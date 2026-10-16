@@ -5,7 +5,12 @@
   "default_workbook_name": "Libro",
   "errors": {
     "model_not_found": "Modelo no encontrado o error al cargar",
-    "example_not_found": "Archivo de ejemplo no encontrado o error al cargar"
+    "example_not_found": "Archivo de ejemplo no encontrado o error al cargar",
+    "storage_save_failed": "No se han podido guardar los cambios. Puede que el navegador no tenga espacio de almacenamiento."
+  },
+  "unsaved_bar": {
+    "message": "Estás viendo un libro de solo lectura. Guarda una copia para editarlo.",
+    "save_copy": "Guardar una copia"
   },
   "welcome_dialog": {
     "title": "Bienvenido a IronCalc",
@@ -51,6 +56,7 @@
     "search_workbook": "Buscar libros",
     "search_placeholder": "Buscar libro...",
     "clear_search": "Borrar búsqueda",
+    "empty_state": "Aún no hay libros. Los libros que crees o guardes aparecerán aquí.",
     "search_no_results": "Tu búsqueda no coincide con ningún libro.",
     "pinned": "Fijados",
     "today": "Hoy",
@@ -70,8 +76,8 @@
     "cancel": "Cancelar",
     "delete_workbooks_one": "Eliminar {{count}} libro",
     "delete_workbooks_other": "Eliminar {{count}} libros",
-    "bulk_delete_message_one": "Este libro será eliminado permanentemente.",
-    "bulk_delete_message_other": "{{count}} libros serán eliminados permanentemente.",
+    "bulk_delete_message_one": "Este libro será eliminado permanentemente. Los enlaces que hayas compartido seguirán funcionando.",
+    "bulk_delete_message_other": "{{count}} libros serán eliminados permanentemente. Los enlaces que hayas compartido seguirán funcionando.",
     "select_workbook": "Seleccionar {{name}}"
   },
   "file_bar": {
@@ -97,14 +103,15 @@
         "button": "Eliminar libro",
         "title": "¿Estás seguro?",
         "subtitle": "El libro '{{workbookName}}' será eliminado permanentemente.",
-        "warning": "Esta acción no se puede deshacer.",
+        "warning": "Esta acción no se puede deshacer. Los enlaces que hayas compartido seguirán funcionando.",
         "confirm_button": "Sí, eliminar",
         "cancel_button": "Cancelar"
       },
       "default_language": "Idioma predeterminado",
-      "theme": "Tema",
-      "theme_light": "Claro",
-      "theme_dark": "Oscuro"
+      "appearance": "Apariencia",
+      "appearance_light": "Claro",
+      "appearance_dark": "Oscuro",
+      "appearance_system": "Sistema"
     },
     "help_menu": {
       "button": "Ayuda",
@@ -116,7 +123,7 @@
       "button": "Compartir",
       "copy_url": "Copiar URL",
       "copied": "¡Copiado!",
-      "info_text": "Cualquier persona con el enlace podrá acceder a una copia de este libro"
+      "info_text": "Cualquier persona con el enlace podrá acceder a una copia de este libro. Los enlaces compartidos no se pueden eliminar."
     }
   },
   "loading_screen": {

@@ -15,6 +15,7 @@ export function WorkbookTitle(properties: {
   name: string;
   onNameChange: (name: string) => void;
   maxWidth: number;
+  readOnly: boolean;
 }) {
   const [width, setWidth] = useState(0);
   const [name, setName] = useState(properties.name);
@@ -45,6 +46,7 @@ export function WorkbookTitle(properties: {
       <input
         className="app-ic-workbook-title-input"
         value={name}
+        readOnly={properties.readOnly}
         onChange={handleChange}
         onBlur={(event) => {
           properties.onNameChange(event.target.value);

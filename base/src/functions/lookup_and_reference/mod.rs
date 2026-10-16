@@ -743,7 +743,8 @@ impl<'a> Model<'a> {
 
     // ROW([reference])
     // If reference is not present returns the row of the present cell.
-    // Otherwise returns the row number of reference
+    // Otherwise returns the row number of reference. A reference that spans
+    // several rows gives a column with the number of each of them.
     pub(crate) fn fn_row(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() > 1 {
             return CalcResult::new_args_number_error(cell);
@@ -752,26 +753,63 @@ impl<'a> Model<'a> {
             return CalcResult::Number(cell.row as f64);
         }
         match self.get_reference(&args[0], cell) {
-            Ok(c) => CalcResult::Number(c.left.row as f64),
+            Ok(c) => {
+                let first = c.left.row.min(c.right.row);
+                let last = c.left.row.max(c.right.row);
+                if first == last {
+                    return CalcResult::Number(first as f64);
+                }
+                CalcResult::Array(
+                    (first..=last)
+                        .map(|row| vec![ArrayNode::Number(row as f64)])
+                        .collect(),
+                )
+            }
             Err(s) => s,
         }
     }
 
-    // ROWS(range)
-    // Returns the number of rows in range
+    // rows_and_columns_shape returns the (rows, columns) dimensions of the
+    // argument of ROWS or COLUMNS.
+    //
+    // A reference keeps the dimensions of the range it points at, so `@`
+    // narrows it first (COLUMNS(@A1:C1) is 1). Any other argument is
+    // evaluated: an array counts its own dimensions and a scalar is 1x1.
+    fn rows_and_columns_shape(
+        &mut self,
+        node: &Node,
+        cell: CellReferenceIndex,
+    ) -> Result<(usize, usize), CalcResult> {
+        let value = self.evaluate_node_with_reference(node, cell);
+        if value.is_error() {
+            return Err(value);
+        }
+        Ok(match value {
+            CalcResult::Range { left, right } => (
+                (right.row - left.row + 1) as usize,
+                (right.column - left.column + 1) as usize,
+            ),
+            CalcResult::Array(rows) => (rows.len(), rows.first().map_or(0, Vec::len)),
+            _ => (1, 1),
+        })
+    }
+
+    // ROWS(reference_or_array)
+    // Returns the number of rows in reference_or_array
     pub(crate) fn fn_rows(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() != 1 {
             return CalcResult::new_args_number_error(cell);
         }
-        match self.get_reference(&args[0], cell) {
-            Ok(c) => CalcResult::Number((c.right.row - c.left.row + 1) as f64),
+        match self.rows_and_columns_shape(&args[0], cell) {
+            Ok((rows, _)) => CalcResult::Number(rows as f64),
             Err(s) => s,
         }
     }
 
     // COLUMN([reference])
     // If reference is not present returns the column of the present cell.
-    // Otherwise returns the column number of reference
+    // Otherwise returns the column number of reference. A reference that spans
+    // several columns gives a row with the number of each of them.
     pub(crate) fn fn_column(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() > 1 {
             return CalcResult::new_args_number_error(cell);
@@ -781,7 +819,16 @@ impl<'a> Model<'a> {
         }
 
         match self.get_reference(&args[0], cell) {
-            Ok(range) => CalcResult::Number(range.left.column as f64),
+            Ok(range) => {
+                let first = range.left.column.min(range.right.column);
+                let last = range.left.column.max(range.right.column);
+                if first == last {
+                    return CalcResult::Number(first as f64);
+                }
+                CalcResult::Array(vec![(first..=last)
+                    .map(|column| ArrayNode::Number(column as f64))
+                    .collect()])
+            }
             Err(s) => s,
         }
     }
@@ -853,62 +900,62 @@ impl<'a> Model<'a> {
         calc_result_to_array_node(value)
     }
 
-    // COLUMNS(range)
-    // Returns the number of columns in range
+    // COLUMNS(reference_or_array)
+    // Returns the number of columns in reference_or_array
     pub(crate) fn fn_columns(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() != 1 {
             return CalcResult::new_args_number_error(cell);
         }
-        match self.get_reference(&args[0], cell) {
-            Ok(c) => CalcResult::Number((c.right.column - c.left.column + 1) as f64),
+        match self.rows_and_columns_shape(&args[0], cell) {
+            Ok((_, columns)) => CalcResult::Number(columns as f64),
             Err(s) => s,
         }
     }
 
-    // INDIRECT(ref_tex)
-    // Returns the reference specified by 'ref_text'
+    // INDIRECT(ref_text, [a1])
+    // Returns the reference specified by 'ref_text'. It is read in A1 notation
+    // unless 'a1' is FALSE, in which case it is read in R1C1 notation.
     pub(crate) fn fn_indirect(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() > 2 || args.is_empty() {
             return CalcResult::new_args_number_error(cell);
         }
-        let value = self.get_string(&args[0], cell);
-        match value {
-            Ok(s) => {
-                if args.len() == 2 {
-                    return CalcResult::Error {
-                        error: Error::NIMPL,
-                        origin: cell,
-                        message: "Not implemented".to_string(),
-                    };
-                }
-
-                let parsed_reference = ParsedReference::parse_reference_formula(
-                    Some(cell.sheet),
-                    &s,
-                    self.locale,
-                    |name| self.get_sheet_index_by_name(name),
-                );
-
-                let parsed_reference = match parsed_reference {
-                    Ok(reference) => reference,
-                    Err(message) => {
-                        return CalcResult::Error {
-                            error: Error::REF,
-                            origin: cell,
-                            message,
-                        };
-                    }
-                };
-
-                match parsed_reference {
-                    ParsedReference::CellReference(reference) => CalcResult::Range {
-                        left: reference,
-                        right: reference,
-                    },
-                    ParsedReference::Range(left, right) => CalcResult::Range { left, right },
-                }
+        let ref_text = match self.get_string(&args[0], cell) {
+            Ok(s) => s,
+            Err(v) => return v,
+        };
+        let a1 = if args.len() == 2 {
+            match self.get_boolean(&args[1], cell) {
+                Ok(b) => b,
+                Err(v) => return v,
             }
-            Err(v) => v,
+        } else {
+            true
+        };
+
+        let parsed_reference = if a1 {
+            ParsedReference::parse_reference_formula(
+                Some(cell.sheet),
+                &ref_text,
+                self.locale,
+                |name| self.get_sheet_index_by_name(name),
+            )
+        } else {
+            ParsedReference::parse_r1c1_reference(cell, &ref_text, |name| {
+                self.get_sheet_index_by_name(name)
+            })
+        };
+
+        match parsed_reference {
+            Ok(ParsedReference::CellReference(reference)) => CalcResult::Range {
+                left: reference,
+                right: reference,
+            },
+            Ok(ParsedReference::Range(left, right)) => CalcResult::Range { left, right },
+            Err(message) => CalcResult::Error {
+                error: Error::REF,
+                origin: cell,
+                message,
+            },
         }
     }
 

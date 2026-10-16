@@ -1,5 +1,6 @@
+use crate::arithmetic::power;
 use crate::cast::NumberOrArray;
-use crate::constants::{EXCEL_PRECISION, LAST_COLUMN, LAST_ROW};
+use crate::constants::EXCEL_PRECISION;
 use crate::expressions::parser::ArrayNode;
 use crate::expressions::types::CellReferenceIndex;
 use crate::number_format::{to_excel_precision, to_precision};
@@ -11,70 +12,41 @@ use std::f64::consts::PI;
 
 impl<'a> Model<'a> {
     pub(crate) fn fn_min(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
-        let mut result = f64::NAN;
-        for arg in args {
-            match self.evaluate_node_in_context(arg, cell) {
-                CalcResult::Number(value) => result = value.min(result),
-                CalcResult::Range { left, right } => {
-                    if left.sheet != right.sheet {
-                        return CalcResult::new_error(
-                            Error::VALUE,
-                            cell,
-                            "Ranges are in different sheets".to_string(),
-                        );
-                    }
-                    for row in left.row..(right.row + 1) {
-                        for column in left.column..(right.column + 1) {
-                            match self.evaluate_cell(CellReferenceIndex {
-                                sheet: left.sheet,
-                                row,
-                                column,
-                            }) {
-                                CalcResult::Number(value) => {
-                                    result = value.min(result);
-                                }
-                                error @ CalcResult::Error { .. } => return error,
-                                _ => {
-                                    // We ignore booleans and strings
-                                }
-                            }
-                        }
-                    }
-                }
-                CalcResult::Array(array) => {
-                    for row in array {
-                        for node in row {
-                            match node {
-                                ArrayNode::Number(value) => result = value.min(result),
-                                ArrayNode::Error(error) => {
-                                    return CalcResult::Error {
-                                        error,
-                                        origin: cell,
-                                        message: String::new(),
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                error @ CalcResult::Error { .. } => return error,
-                _ => {
-                    // We ignore booleans and strings
-                }
-            };
-        }
-        if result.is_nan() || result.is_infinite() {
-            return CalcResult::Number(0.0);
-        }
-        CalcResult::Number(result)
+        self.min_or_max(args, cell, f64::min)
     }
 
     pub(crate) fn fn_max(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
+        self.min_or_max(args, cell, f64::max)
+    }
+
+    /// MIN and MAX: `pick` keeps the one of two numbers the function is after.
+    ///
+    /// In references and arrays only the numbers count; text and booleans are
+    /// ignored. A value given directly as an argument has to be a number:
+    /// booleans and text that reads as a number are converted, any other text
+    /// is an error.
+    fn min_or_max(
+        &mut self,
+        args: &[Node],
+        cell: CellReferenceIndex,
+        pick: fn(f64, f64) -> f64,
+    ) -> CalcResult {
         let mut result = f64::NAN;
         for arg in args {
-            match self.evaluate_node_in_context(arg, cell) {
-                CalcResult::Number(value) => result = value.max(result),
+            // A reference stays a reference, also to a single cell
+            match self.evaluate_node_with_reference(arg, cell) {
+                CalcResult::Number(value) => result = pick(value, result),
+                CalcResult::Boolean(value) => result = pick(if value { 1.0 } else { 0.0 }, result),
+                CalcResult::String(value) => match self.cast_number(&value) {
+                    Some(value) => result = pick(value, result),
+                    None => {
+                        return CalcResult::new_error(
+                            Error::VALUE,
+                            cell,
+                            "Argument cannot be cast into number".to_string(),
+                        );
+                    }
+                },
                 CalcResult::Range { left, right } => {
                     if left.sheet != right.sheet {
                         return CalcResult::new_error(
@@ -91,7 +63,7 @@ impl<'a> Model<'a> {
                                 column,
                             }) {
                                 CalcResult::Number(value) => {
-                                    result = value.max(result);
+                                    result = pick(value, result);
                                 }
                                 error @ CalcResult::Error { .. } => return error,
                                 _ => {
@@ -105,7 +77,7 @@ impl<'a> Model<'a> {
                     for row in array {
                         for node in row {
                             match node {
-                                ArrayNode::Number(value) => result = value.max(result),
+                                ArrayNode::Number(value) => result = pick(value, result),
                                 ArrayNode::Error(error) => {
                                     return CalcResult::Error {
                                         error,
@@ -113,15 +85,17 @@ impl<'a> Model<'a> {
                                         message: String::new(),
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    // We ignore booleans and strings
+                                }
                             }
                         }
                     }
                 }
                 error @ CalcResult::Error { .. } => return error,
-                _ => {
-                    // We ignore booleans and strings
-                }
+                // An argument left out, as in `MAX(,-1)`, counts as 0
+                CalcResult::EmptyArg => result = pick(0.0, result),
+                CalcResult::EmptyCell | CalcResult::Lambda(_) => {}
             };
         }
         if result.is_nan() || result.is_infinite() {
@@ -301,29 +275,12 @@ impl<'a> Model<'a> {
                     let mut row2 = right.row;
                     let column1 = left.column;
                     let mut column2 = right.column;
-                    if row1 == 1 && row2 == LAST_ROW {
-                        row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-                    if column1 == 1 && column2 == LAST_COLUMN {
-                        column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
+                    match self.clip_to_used_area(left.sheet, row1, column1, row2, column2) {
+                        Ok((r, c)) => {
+                            row2 = r;
+                            column2 = c;
+                        }
+                        Err(message) => return CalcResult::new_error(Error::ERROR, cell, message),
                     }
                     for row in row1..row2 + 1 {
                         for column in column1..(column2 + 1) {
@@ -401,29 +358,12 @@ impl<'a> Model<'a> {
                     let mut row2 = right.row;
                     let column1 = left.column;
                     let mut column2 = right.column;
-                    if row1 == 1 && row2 == LAST_ROW {
-                        row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-                    if column1 == 1 && column2 == LAST_COLUMN {
-                        column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
+                    match self.clip_to_used_area(left.sheet, row1, column1, row2, column2) {
+                        Ok((r, c)) => {
+                            row2 = r;
+                            column2 = c;
+                        }
+                        Err(message) => return CalcResult::new_error(Error::ERROR, cell, message),
                     }
                     for row in row1..row2 + 1 {
                         for column in column1..(column2 + 1) {
@@ -533,29 +473,12 @@ impl<'a> Model<'a> {
                     let mut row2 = right.row;
                     let column1 = left.column;
                     let mut column2 = right.column;
-                    if row1 == 1 && row2 == LAST_ROW {
-                        row2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_row,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
-                    }
-                    if column1 == 1 && column2 == LAST_COLUMN {
-                        column2 = match self.workbook.worksheet(left.sheet) {
-                            Ok(s) => s.dimension().max_column,
-                            Err(_) => {
-                                return CalcResult::new_error(
-                                    Error::ERROR,
-                                    cell,
-                                    format!("Invalid worksheet index: '{}'", left.sheet),
-                                );
-                            }
-                        };
+                    match self.clip_to_used_area(left.sheet, row1, column1, row2, column2) {
+                        Ok((r, c)) => {
+                            row2 = r;
+                            column2 = c;
+                        }
+                        Err(message) => return CalcResult::new_error(Error::ERROR, cell, message),
                     }
                     for row in row1..row2 + 1 {
                         for column in column1..(column2 + 1) {
@@ -639,8 +562,7 @@ impl<'a> Model<'a> {
             }
             Err(s) => return s,
         };
-        let scale = 10.0_f64.powf(number_of_digits);
-        CalcResult::Number((value * scale).round() / scale)
+        round_result(value, number_of_digits, Rounding::Nearest, cell)
     }
 
     pub(crate) fn fn_roundup(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
@@ -661,12 +583,7 @@ impl<'a> Model<'a> {
             }
             Err(s) => return s,
         };
-        let scale = 10.0_f64.powf(number_of_digits);
-        if value > 0.0 {
-            CalcResult::Number((value * scale).ceil() / scale)
-        } else {
-            CalcResult::Number((value * scale).floor() / scale)
-        }
+        round_result(value, number_of_digits, Rounding::AwayFromZero, cell)
     }
 
     pub(crate) fn fn_rounddown(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
@@ -687,12 +604,7 @@ impl<'a> Model<'a> {
             }
             Err(s) => return s,
         };
-        let scale = 10.0_f64.powf(number_of_digits);
-        if value > 0.0 {
-            CalcResult::Number((value * scale).floor() / scale)
-        } else {
-            CalcResult::Number((value * scale).ceil() / scale)
-        }
+        round_result(value, number_of_digits, Rounding::TowardZero, cell)
     }
 
     // (number, divisor)
@@ -806,6 +718,16 @@ impl<'a> Model<'a> {
         let ratio = to_excel_precision(value / significance, EXCEL_PRECISION);
         let result = f64::ceil(ratio) * significance;
         CalcResult::Number(result)
+    }
+
+    /// ECMA.CEILING(number, significance) — the OpenFormula/ECMA-376 name for
+    /// Excel's regular two-argument CEILING.
+    pub(crate) fn fn_ecma_ceiling(
+        &mut self,
+        args: &[Node],
+        cell: CellReferenceIndex,
+    ) -> CalcResult {
+        self.fn_ceiling(args, cell)
     }
 
     pub(crate) fn fn_ceiling_math(
@@ -1016,7 +938,7 @@ impl<'a> Model<'a> {
             return CalcResult::new_args_number_error(cell);
         }
         let value = match self.get_number(&args[0], cell) {
-            Ok(f) => f,
+            Ok(f) => to_precision(f, 15),
             Err(s) => return s,
         };
         let num_digits = if args.len() == 2 {
@@ -1033,18 +955,7 @@ impl<'a> Model<'a> {
         } else {
             0.0
         };
-        if !(-15.0..=15.0).contains(&num_digits) {
-            return CalcResult::Number(value);
-        }
-        let v = if value >= 0.0 {
-            f64::floor(value * 10f64.powf(num_digits)) / 10f64.powf(num_digits)
-        } else {
-            f64::ceil(value * 10f64.powf(num_digits)) / 10f64.powf(num_digits)
-        };
-        if value.is_finite() && v.is_infinite() {
-            return CalcResult::Number(value);
-        }
-        CalcResult::Number(v)
+        round_result(value, num_digits, Rounding::TowardZero, cell)
     }
 
     single_number_fn!(fn_log10, |f| if f <= 0.0 {
@@ -1239,45 +1150,36 @@ impl<'a> Model<'a> {
         CalcResult::Number(f64::log(x, y))
     }
 
+    // POWER(number, power)
+    // If the number or the power are arrays it works element by element.
     pub(crate) fn fn_power(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
         if args.len() != 2 {
             return CalcResult::new_args_number_error(cell);
         }
-        let x = match self.get_number(&args[0], cell) {
-            Ok(f) => f,
-            Err(s) => return s,
+        let x = self.get_number_or_array(&args[0], cell);
+        let y = self.get_number_or_array(&args[1], cell);
+        let (x, y) = match (x, y) {
+            (Ok(NumberOrArray::Number(x)), Ok(NumberOrArray::Number(y))) => (x, y),
+            (x, y) => return self.arithmetic_on_values(x, y, cell, &power),
         };
-        let y = match self.get_number(&args[1], cell) {
-            Ok(f) => f,
-            Err(s) => return s,
-        };
-        if x == 0.0 && y == 0.0 {
-            return CalcResult::Error {
-                error: Error::NUM,
-                origin: cell,
-                message: "Arguments can't be both zero".to_string(),
-            };
+        match power(x, y) {
+            Ok(result) => CalcResult::Number(result),
+            Err(error) => {
+                let message = if x == 0.0 && y == 0.0 {
+                    "Arguments can't be both zero"
+                } else if error == Error::DIV {
+                    "POWER returned infinity"
+                } else {
+                    // This might happen for some combinations of negative base and exponent
+                    "Invalid arguments for POWER"
+                };
+                CalcResult::Error {
+                    error,
+                    origin: cell,
+                    message: message.to_string(),
+                }
+            }
         }
-        if y == 0.0 {
-            return CalcResult::Number(1.0);
-        }
-        let result = x.powf(y);
-        if result.is_infinite() {
-            return CalcResult::Error {
-                error: Error::DIV,
-                origin: cell,
-                message: "POWER returned infinity".to_string(),
-            };
-        }
-        if result.is_nan() {
-            // This might happen for some combinations of negative base and exponent
-            return CalcResult::Error {
-                error: Error::NUM,
-                origin: cell,
-                message: "Invalid arguments for POWER".to_string(),
-            };
-        }
-        CalcResult::Number(result)
     }
 
     pub(crate) fn fn_combin(&mut self, args: &[Node], cell: CellReferenceIndex) -> CalcResult {
@@ -1360,5 +1262,58 @@ impl<'a> Model<'a> {
             result *= (n + t) / (t + 1.0);
         }
         CalcResult::Number(result)
+    }
+}
+
+/// How ROUND, ROUNDUP, ROUNDDOWN and TRUNC round.
+#[derive(Clone, Copy)]
+enum Rounding {
+    Nearest,
+    AwayFromZero,
+    TowardZero,
+}
+
+/// `value` (already at 15 significant digits) rounded at `digits` decimals (an
+/// integer, negative for tens, hundreds, ...).
+///
+/// Like Excel, the scaled value is taken at 15 significant digits before rounding,
+/// so binary noise does not cross a rounding boundary: 1.005 * 100 is
+/// 100.49999999999999 in binary, and ROUND(1.005, 2) is 1.01.
+///
+/// Returns `None` when the result is not a finite number (ROUNDUP of a nonzero
+/// number to a multiple of 10^309 or more).
+fn round_to_digits(value: f64, digits: f64, mode: Rounding) -> Option<f64> {
+    let scale = 10f64.powf(digits);
+    if scale == 0.0 {
+        // Every finite number is less than half a unit at this position.
+        return match mode {
+            Rounding::AwayFromZero if value != 0.0 => None,
+            _ => Some(0.0),
+        };
+    }
+    let scaled = value * scale;
+    if !scaled.is_finite() {
+        // The position is past the last digit a number this large has.
+        return Some(value);
+    }
+    let scaled = to_precision(scaled, 15);
+    let rounded = match mode {
+        Rounding::Nearest => scaled.round(),
+        Rounding::AwayFromZero if value > 0.0 => scaled.ceil(),
+        Rounding::AwayFromZero => scaled.floor(),
+        Rounding::TowardZero => scaled.trunc(),
+    };
+    let result = rounded / scale;
+    result.is_finite().then_some(result)
+}
+
+fn round_result(value: f64, digits: f64, mode: Rounding, cell: CellReferenceIndex) -> CalcResult {
+    match round_to_digits(value, digits, mode) {
+        Some(v) => CalcResult::Number(v),
+        None => CalcResult::Error {
+            error: Error::NUM,
+            origin: cell,
+            message: "Result is too large".to_string(),
+        },
     }
 }

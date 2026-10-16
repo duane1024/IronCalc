@@ -34,7 +34,7 @@ impl<'a> UserModel<'a> {
                         .worksheet(*sheet)
                         .ok()
                         .and_then(|ws| ws.cell(*row, *column))
-                        .and_then(|cell| match cell {
+                        .and_then(|cell| match &*cell {
                             Cell::ArrayFormula {
                                 kind: ArrayKind::Dynamic,
                                 r,
@@ -49,7 +49,7 @@ impl<'a> UserModel<'a> {
                                 if r == *row && c == *column {
                                     continue;
                                 }
-                                if matches!(ws.cell(r, c), Some(Cell::SpillCell { a, .. }) if *a == (*row, *column))
+                                if matches!(ws.cell(r, c).as_deref(), Some(Cell::SpillCell { a, .. }) if *a == (*row, *column))
                                 {
                                     let _ = ws.cell_clear_contents(r, c);
                                 }
@@ -222,7 +222,7 @@ impl<'a> UserModel<'a> {
                             .worksheet(*sheet)
                             .ok()
                             .and_then(|ws| ws.cell(*row, *column))
-                            .map(|c| !matches!(c, Cell::EmptyCell { .. }))
+                            .map(|c| !matches!(*c, Cell::EmptyCell { .. }))
                             .unwrap_or(false);
                         if has_content {
                             self.model
@@ -258,7 +258,7 @@ impl<'a> UserModel<'a> {
                         if let Some(row_style) = row_data.row.clone() {
                             worksheet.rows.push(row_style);
                         }
-                        worksheet.sheet_data.insert(r, row_data.data.clone());
+                        worksheet.sheet_data.set_row(r, row_data.data.clone());
                     }
                 }
                 Diff::InsertColumns {
@@ -426,10 +426,8 @@ impl<'a> UserModel<'a> {
                     self.model
                         .insert_sheet(sheet_name, sheet_index, Some(sheet_id))?;
                     let worksheet = self.model.workbook.worksheet_mut(*sheet)?;
-                    for (row, row_data) in &old_data.sheet_data {
-                        for (column, cell) in row_data {
-                            worksheet.update_cell(*row, *column, cell.clone())?;
-                        }
+                    for (row, column, cell) in old_data.sheet_data.cells() {
+                        worksheet.update_cell(row, column, cell.into_owned())?;
                     }
                     worksheet.rows = old_data.rows.clone();
                     worksheet.cols = old_data.cols.clone();

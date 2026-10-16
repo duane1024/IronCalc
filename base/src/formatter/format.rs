@@ -1,6 +1,9 @@
 use chrono::Datelike;
 
-use crate::{locale::Locale, number_format::to_precision};
+use crate::{
+    locale::Locale,
+    number_format::{parse_finite_number, to_precision},
+};
 
 use super::{
     dates::{date_to_serial_number, from_excel_date},
@@ -510,7 +513,8 @@ pub fn format_number(value_original: f64, format: &str, locale: &Locale) -> Form
             // "0.00" is "0.00". (The old `value < -10^-precision` test dropped the sign of a
             // value that rounds to exactly -10^-precision, e.g. -0.98 -> "1".)
             let is_negative = value < 0.0
-                && (int_number != 0.0 || fract_part.iter().any(|c| c.is_ascii_digit() && *c != '0'));
+                && (int_number != 0.0
+                    || fract_part.iter().any(|c| c.is_ascii_digit() && *c != '0'));
             let mut needs_period = false;
 
             for token in tokens {
@@ -1025,9 +1029,9 @@ fn parse_number(
     if position != len {
         return Err("Could not parse number".to_string());
     };
-    match chars.parse::<f64>() {
-        Err(_) => Err("Failed to parse to double".to_string()),
-        Ok(v) => Ok((
+    match parse_finite_number(&chars) {
+        None => Err("Failed to parse to double".to_string()),
+        Some(v) => Ok((
             sign * v,
             NumberOptions {
                 has_commas: !group_separator_index.is_empty(),
